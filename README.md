@@ -8,8 +8,9 @@ O problema que resolve: a IA trata skill e baseline como sugestão e foge do pad
 só reprova depois do push. A `guarda` é o portão objetivo que a IA precisa passar antes de
 terminar uma tarefa: mesmo código + mesmo `guarda.yml` + mesma versão = mesmo resultado.
 
-> Status: **Fase 4 em andamento (v0.4.0: 53 regras, 5 presets, Gradle/Maven, releases)**.
-> A Fase 2 aguarda a comparação com o Sonar. Ver [docs/fase-0.md](docs/fase-0.md),
+> Status: **Fase 4 em andamento (v0.4.0+: 94 regras, 5 presets, segurança/Spring/bugs, baselines avançadas, Gradle/Maven, releases)**.
+> A Fase 2 aguarda a comparação com o Sonar. Ver [docs/guia-ia.md](docs/guia-ia.md) (manual
+> operacional para agentes de IA), [docs/fase-0.md](docs/fase-0.md),
 > [docs/fase-1.md](docs/fase-1.md), [docs/fase-2.md](docs/fase-2.md),
 > [docs/fase-3.md](docs/fase-3.md), [docs/fase-4.md](docs/fase-4.md) e o [roadmap](#roadmap).
 
@@ -49,6 +50,23 @@ guarda mcp                     # servidor MCP por stdio: verificar, explicar, ar
 guarda schema                  # JSON Schema do guarda.yml
 guarda medir [raiz]            # parse, tempo, violações, cobertura e código novo
 ```
+
+## Guia rápido para agentes de IA
+
+Se você é um agente de IA (Claude Code, Codex, Antigravity, Cursor, Copilot...) usando a
+`guarda` em um projeto Java/Kotlin, siga o fluxo abaixo (manual completo em
+[docs/guia-ia.md](docs/guia-ia.md)):
+
+1. **Antes de criar classes**: rode `guarda contexto` (ou ferramenta MCP `arquitetura`) para
+   ver as camadas reais, pastas e limites do projeto.
+2. **Durante a edição**: rode `guarda check --arquivos <arquivo>` (ou MCP `verificar` com
+   `arquivos`); funciona também para `application*.yml|properties` e `.env`.
+3. **Dúvida sobre uma regra**: rode `guarda explicar <CODIGO>` (ou MCP `explicar`).
+4. **Antes de encerrar**: rode `guarda check --alterados` (e `--cobertura` quando o projeto
+   tiver `cobertura:` no `guarda.yml`) até sair `✓ guarda 0 erros` (exit code `0`).
+5. **Regras de ouro**: não edite `guarda.yml`, `.guarda/`, hooks ou plugins de cobertura e não
+   rode `guarda baseline gerar|aceitar` nem `git commit --no-verify` (decisão humana). Exit
+   codes: `0` = passou, `1` = violação nova, `2` = erro de uso/configuração.
 
 ## Qualquer agente de IA
 
@@ -163,6 +181,15 @@ a medição em 12 projetos está em [docs/fase-4.md](docs/fase-4.md).
 | NEG001 | Exceção HTTP (ResponseStatusException, JAX-RS, Ktor) na camada de negócio | Clean Architecture, hexagonal | alvo: erro |
 | NEG002 | `IllegalArgumentException`/`IllegalStateException` como regra de negócio | política da guarda | — |
 
+Lote 5 (em medição, entram como **aviso**; ver [docs/fase-4.md](docs/fase-4.md)):
+
+| Código | Regra | Origem | Alvo |
+| --- | --- | --- | --- |
+| SEC001–SEC020 | Credenciais fixas (código, YAML/properties, URLs, chaves de API), SQL/comando montado, hash/cifra/TLS fracos, `Random` em segredo, CORS `*`, desserialização, XXE, CSRF, rotas abertas, cookies, JWT sem `verify`, log sensível, TODO de segurança, config insegura (`on_param`, actuator, H2), arquivo de segredo fora do `.gitignore`, IP fixo, fluxo request → sorvedouro | Sonar way, FindSecBugs, Cloudflare security-audit | erro / aviso |
+| SPR001–SPR006 | `@Autowired` em campo, proxy em `private`, auto-chamada de proxy, `@Entity` em `@RequestBody`, `@RequestMapping` sem método HTTP, `@Transactional` em `@RestController`/`@Controller` | Sonar Spring, arquitetura em camadas | erro / aviso |
+| BUG001–BUG009 | `return`/`throw` em `finally`, operandos idênticos, auto-atribuição, condição/ramo repetido, `String ==`, `new BigDecimal(double)`, `InterruptedException` ignorada, `assert` em produção Java | Sonar BUG, detekt, PMD | erro |
+| SML010–SML011, CND004, KT008, JV006, TST004 | Bloco vazio, exceção relançada sem causa, `if` aninhado juntável, `MutableStateFlow`/`MutableLiveData` exposto, literal à direita no `equals`, asserção tautológica em teste (`assertTrue(true)`, `assertEquals(x, x)`) | Sonar, detekt, PMD | aviso / erro |
+
 `guarda explicar <CODIGO>` mostra o porquê e um exemplo errado e certo de cada regra.
 
 Supressão pontual, sempre com motivo (vale para a linha do comentário e a seguinte):
@@ -248,10 +275,13 @@ consulta: |
   com import proibido; nomes típicos do estilo (`port`, `adapter`, `usecase`, `viewmodel`)
   desempatam. Abaixo de 60% a ARQ001 fica desligada até as camadas serem declaradas.
 - **Baseline**: impressão digital = código + arquivo + símbolo dono + hash do trecho
-  normalizado (sem número de linha). Regras de limite (CPX001, CPX005) usam catraca: o valor
-  pode cair, nunca subir. `check --atualizar-baseline` só remove; crescer exige
-  `baseline gerar` ou `baseline aceitar --motivo` (o motivo fica gravado na entrada). A IA
-  não roda nenhum dos dois: o hook proteger barra.
+  normalizado (sem número de linha). Regras de limite (`CPX001–003`, `CPX005–009`, `SML001`,
+  `COV002–003`) usam catraca determinística (inclusive em sobrecargas): o valor pode cair,
+  nunca subir. `check --atualizar-baseline` remove o que foi corrigido (inclusive em recursos e
+  arquivos deletados) e aperta catracas; `baseline status` audita a saúde do baseline; crescer
+  exige `baseline gerar` (preserva `motivo`s e aceita `--regras`) ou `baseline aceitar --motivo`
+  (aceita `--linha` e `--simbolo` e atualiza catracas). A IA não roda nenhum dos dois: o hook
+  proteger barra.
 - **Cache**: `.guarda/cache/` guarda o resultado das regras por arquivo, indexado por
   tamanho, data e hash do conteúdo; a chave inclui a versão e os limites, então o cache
   nunca muda o resultado. Também serve de índice do projeto no modo `--arquivos`.

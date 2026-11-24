@@ -23,9 +23,17 @@ fn montar_contexto(rel: &Relatorio, cfg: &Config) -> String {
     l.push("## guarda (verificação determinística)".to_string());
     l.push(
         "- Antes de terminar qualquer tarefa, rode `guarda check --alterados` e só termine com \
-         `✓ guarda 0 erros`. Cada linha de violação traz a correção depois do `|`."
+         `✓ guarda 0 erros`. Cada linha de violação traz a correção depois do `|`; para detalhes \
+         de uma regra, rode `guarda explicar <CODIGO>` (ou use a ferramenta MCP `explicar`)."
             .to_string(),
     );
+    if cfg.cobertura.is_some() {
+        l.push(
+            "- Cobertura ativa: rode `guarda check --alterados --cobertura` quando o relatório \
+             estiver desatualizado (mínimo de código novo no guarda.yml)."
+                .to_string(),
+        );
+    }
     match &rel.arquitetura {
         Some(arq) if !arq.camadas.is_empty() => {
             let base = rel.projeto.base.as_deref().unwrap_or("");
