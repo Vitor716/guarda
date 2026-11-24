@@ -15,9 +15,12 @@ cargo install --path . --locked         # atualiza o `guarda` do PATH (os hooks 
 ## Mapa do código
 
 - `src/lang.rs`: parser tree-sitter, utilitários de árvore, pacote, imports, linhas de código.
-- `src/regras/`: regras por arquivo (`complexidade.rs` = CPX001/CPX005, `supressao.rs` = SUP001
-  e `guarda:ignorar`, KT001 em `mod.rs`).
-- `src/arquitetura.rs`: padrões ArchUnit, presets, detecção (`pontuar`) e ARQ001.
+- `src/regras/`: regras por arquivo. `complexidade.rs` (CPX001/CPX005), `estrutura.rs`
+  (métricas de função e classe: CPX002-004, CPX006-009, SML001, JV003; tem o `percorrer` com
+  poda), `excecoes.rs` (SML004-006), `smells.rs` (SML003, SML007-009), `java.rs` (JV001/002/
+  004/005), `kotlin.rs` (KT001-007), `supressao.rs` (SUP001 e `guarda:ignorar`).
+- `src/arquitetura.rs`: padrões ArchUnit, presets, detecção (`pontuar`), ARQ001, ARQ002
+  (ciclos entre fatias), ARQ003 (framework) e ARQ004 (controlador).
 - `src/motor.rs`: varre, analisa em paralelo (ou tira do `cache.rs`), monta o índice, aplica
   supressões e ordena.
 - `src/gate.rs`: motor + baseline + gate + GRD001; usado pelo `check` e pelos hooks.
@@ -45,6 +48,11 @@ cargo install --path . --locked         # atualiza o `guarda` do PATH (os hooks 
   Java e Kotlin nomeiam diferente: `if_statement` × `if_expression`, `catch_clause` ×
   `catch_block`).
 - Toda regra entra com teste; mudança de saída quebra `tests/cli.rs` de propósito.
+- Regra nova entra como aviso (`severidade: Aviso`, `alvo` = a severidade final) e precisa de
+  uma explicação em `explicar.rs`. Antes de promover a erro, meça num projeto real e revise
+  amostras de cada achado (`docs/fase-N.md` registra a revisão).
+- Não reinstale o binário (`cargo install`) enquanto houver semana de teste em projeto real:
+  os hooks de lá usam o `guarda` do PATH. Teste com `target/release/guarda.exe`.
 - Hook nunca bloqueia por erro próprio (só por decisão): erro interno é exit 1 no Claude e
   no Codex e a resposta de liberar no Antigravity.
 - Protocolo de agente muda: antes de mexer em `ler_evento`/`responder`, confira a

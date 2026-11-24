@@ -322,7 +322,24 @@ impl Config {
 
     /// Impressão digital do que muda o resultado das regras por arquivo (para o cache).
     pub fn impressao_regras(&self) -> String {
-        format!("{}|{:?}|regras3", env!("CARGO_PKG_VERSION"), self.limites)
+        // A identidade do executável muda a cada build: regra alterada nunca lê cache velho.
+        let binario = std::env::current_exe()
+            .and_then(std::fs::metadata)
+            .map(|m| {
+                let t = m
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map_or(0, |d| d.as_nanos());
+                format!("{}:{t}", m.len())
+            })
+            .unwrap_or_default();
+        format!(
+            "{}|{binario}|{:?}|{:?}",
+            env!("CARGO_PKG_VERSION"),
+            self.limites,
+            self.arquitetura.frameworks
+        )
     }
 }
 

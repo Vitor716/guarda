@@ -98,6 +98,11 @@ fn parece_codigo(linha: &str) -> bool {
     if l.ends_with('.') || l.ends_with(':') {
         return false;
     }
+    // Divisor de seção (// ===== Auxiliares =====): mais enfeite que texto.
+    let enfeite = l.chars().filter(|c| "=-*#~_/+".contains(*c)).count();
+    if enfeite * 10 > l.chars().count() * 4 {
+        return false;
+    }
     CODIGO.is_match(l)
         && (l.contains('(')
             || l.contains('=')
@@ -128,10 +133,12 @@ pub fn verificar(ctx: &Contexto, v: &mut Vec<Violacao>) {
         } else if k == "line_comment" || k == "block_comment" {
             let t = texto(n, f);
             if TODO.is_match(t) && !TICKET.is_match(t) {
+                // Num bloco de comentário, a linha do TODO, não a do `/**`.
+                let deslocamento = t.lines().position(|l| TODO.is_match(l)).unwrap_or(0);
                 v.push(Violacao::nova(
                     "SML009",
                     ctx.arquivo,
-                    linha(n),
+                    linha(n) + deslocamento,
                     "TODO/FIXME sem ticket",
                     "aponte o ticket (ABC-123 ou #123) ou resolva agora",
                     simbolo_dono(n, f),
@@ -341,5 +348,11 @@ mod testes {
         assert!(parece_codigo("return y;"));
         assert!(!parece_codigo("Calcula o total do pedido."));
         assert!(!parece_codigo("veja https://exemplo.com/a=b"));
+        assert!(!parece_codigo(
+            "============== Métodos auxiliares =============="
+        ));
+        assert!(parece_codigo(
+            "authorize.requestMatchers(\"/admin/**\").hasRole(\"ADMIN\");"
+        ));
     }
 }

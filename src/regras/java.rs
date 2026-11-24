@@ -153,8 +153,8 @@ fn java(ctx: &Contexto, v: &mut Vec<Violacao>) {
                 );
             }
         }
-        "formal_parameter" => {
-            if eh_optional(n.child_by_field_name("type"), f) {
+        "formal_parameter"
+            if eh_optional(n.child_by_field_name("type"), f) => {
                 nova(
                     "JV004",
                     n,
@@ -162,7 +162,6 @@ fn java(ctx: &Contexto, v: &mut Vec<Violacao>) {
                     "receba o valor (anulável) ou crie duas versões da função",
                 );
             }
-        }
         _ => {}
     });
 }

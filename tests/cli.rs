@@ -24,11 +24,11 @@ fn check_sem_config_detecta_e_reporta() {
 src/main/java/com/app/domain/Nota.java
   3 ARQ001 dominio importa adaptadores-saida (HttpClient) | dependa de uma interface (porta) em dominio e implemente em adaptadores-saida
   7 SUP001 @SuppressWarnings sem motivo | comente o motivo na mesma linha ou na linha de cima
-  3 ARQ002 ciclo entre fatias: domain → infra → domain (ciclo: domain, infra) | quebre o ciclo: o lado de dentro declara uma interface e o de fora implementa
+  3 ARQ002 domain → infra fecha um ciclo entre fatias (domain, infra) | quebre o ciclo: o lado de dentro declara uma interface e o de fora implementa
 src/main/java/com/app/domain/Quebrado.java
   4 ERR000 o parser não leu o arquivo inteiro (1 trecho(s) com erro) | se o código compila, é limite da gramática: registre o caso
 src/main/java/com/app/infra/HttpClient.java
-  3 ARQ002 ciclo entre fatias: infra → domain → infra (ciclo: domain, infra) | quebre o ciclo: o lado de dentro declara uma interface e o de fora implementa
+  3 ARQ002 infra → domain fecha um ciclo entre fatias (domain, infra) | quebre o ciclo: o lado de dentro declara uma interface e o de fora implementa
 src/main/kotlin/com/app/application/Calculo.kt
   7 KT001 uso de !! | troque por ?:, ?.let ou requireNotNull com mensagem
  10 SUP001 guarda:ignorar sem código ou sem motivo | escreva // guarda:ignorar CODIGO motivo: <por quê>

@@ -23,6 +23,14 @@ const GENERICAS_PEGAS: &[&str] = &[
 /// Lista do detekt TooGenericExceptionThrown.
 const GENERICAS_LANCADAS: &[&str] = &["Error", "Exception", "RuntimeException", "Throwable"];
 
+/// detekt SwallowedException.ignoredExceptionTypes: exceções que é normal tratar sem repassar.
+const PODEM_SER_ENGOLIDAS: &[&str] = &[
+    "InterruptedException",
+    "MalformedURLException",
+    "NumberFormatException",
+    "ParseException",
+];
+
 fn simples(t: &str) -> &str {
     let t = t.trim();
     let t = t.split('<').next().unwrap_or(t);
@@ -96,7 +104,9 @@ pub fn verificar(ctx: &Contexto, v: &mut Vec<Violacao>) {
                     None,
                 ));
             }
-            if ignorada_de_proposito(nome) {
+            if ignorada_de_proposito(nome)
+                || (!tipos.is_empty() && tipos.iter().all(|t| PODEM_SER_ENGOLIDAS.contains(t)))
+            {
                 return;
             }
             let conteudo: Vec<Node> = filhos(bloco)

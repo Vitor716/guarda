@@ -8,10 +8,10 @@ O problema que resolve: a IA trata skill e baseline como sugestão e foge do pad
 só reprova depois do push. A `guarda` é o portão objetivo que a IA precisa passar antes de
 terminar uma tarefa: mesmo código + mesmo `guarda.yml` + mesma versão = mesmo resultado.
 
-> Status: **Fase 2 (Sonar local + qualquer agente)**. A Fase 1 ainda está no portão de uma
-> semana de uso real; a Fase 2 aguarda a comparação com o Sonar num PR.
+> Status: **Fase 3 em andamento (lote 1 de 2: 41 regras)**. A Fase 1 ainda está no portão
+> de uma semana de uso real; a Fase 2 aguarda a comparação com o Sonar num PR.
 > Ver [docs/fase-0.md](docs/fase-0.md), [docs/fase-1.md](docs/fase-1.md),
-> [docs/fase-2.md](docs/fase-2.md) e o [roadmap](#roadmap).
+> [docs/fase-2.md](docs/fase-2.md), [docs/fase-3.md](docs/fase-3.md) e o [roadmap](#roadmap).
 
 ## Instalação
 
@@ -108,6 +108,32 @@ Tudo certo é uma linha só: `✓ guarda 0 erros · baseline 412 · 0,04s`.
 | COV001 | Cobertura do código novo | Sonar Quality Gate | ≥ 80% |
 | COV002 | Cobertura por pacote | Sonar Quality Gate | config |
 | COV003 | Cobertura geral (catraca) | Sonar Quality Gate | config |
+
+Lote 1 da Fase 3: entram como **aviso** e viram erro (quando o alvo é erro) depois de medidas
+sem falso positivo em projeto real. Detalhes em [docs/fase-3.md](docs/fase-3.md).
+
+| Código | Regra | Origem | Padrão |
+| --- | --- | --- | --- |
+| ARQ002 | Ciclo entre fatias (pacotes abaixo da base) | ArchUnit slices | — |
+| ARQ003 | Framework (Spring, JPA, Jackson...) no domínio | Clean Architecture | — |
+| ARQ004 | `@RestController`/`@Controller` fora da camada de entrada | Konsist | — |
+| CPX002 | Complexidade ciclomática | detekt, PMD | > 15 |
+| CPX003 | Aninhamento de blocos | detekt NestedBlockDepth | > 4 |
+| CPX004 | Operandos de && e \|\| numa condição | detekt ComplexCondition | > 4 |
+| CPX006 | Classe longa (linhas de código) | detekt LargeClass | > 600 |
+| CPX007 | Parâmetros por função | detekt LongParameterList | > 6 |
+| CPX008 | Funções por classe | detekt TooManyFunctions | > 11 |
+| CPX009 | `return` por função | detekt ReturnCount | > 2 |
+| SML001 | God Class (aproximação) | PMD GodClass | WMC ≥ 47 e TCC < 1/3 |
+| SML003 | Número mágico | detekt MagicNumber, Sonar S109 | — |
+| SML004 | catch genérico | detekt TooGenericExceptionCaught | — |
+| SML005 | Exceção engolida ou catch vazio | detekt SwallowedException | — |
+| SML006 | Lançar exceção genérica | detekt TooGenericExceptionThrown | — |
+| SML007 | Código comentado | Sonar S125 | — |
+| SML008 | Membro privado não usado | PMD UnusedPrivateField/Method | — |
+| SML009 | TODO/FIXME sem ticket | detekt ForbiddenComment | — |
+| KT002–KT007 | GlobalScope, Thread.sleep em corrotina, suspend com Flow, Dispatchers fixo, data class com var, println | detekt | — |
+| JV001–JV005 | System.out, recurso sem try-with-resources, equals sem hashCode, Optional como campo/parâmetro, java.util.Date | PMD, Sonar | — |
 
 `guarda explicar <CODIGO>` mostra o porquê e um exemplo errado e certo de cada regra.
 

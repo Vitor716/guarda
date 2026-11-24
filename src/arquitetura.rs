@@ -670,7 +670,7 @@ pub fn ciclos(projeto: &Projeto, todos: &[ArquivoIndice], escopo: &HashSet<&str>
                 a.arquivo,
                 imp.linha,
                 format!(
-                    "ciclo entre fatias: {de} → {para} → {de} (ciclo: {})",
+                    "{de} → {para} fecha um ciclo entre fatias ({})",
                     membros[c].join(", ")
                 ),
                 "quebre o ciclo: o lado de dentro declara uma interface e o de fora implementa",
