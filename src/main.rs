@@ -17,6 +17,7 @@ mod lang;
 mod mcp;
 mod modelo;
 mod motor;
+mod recursos;
 mod regras;
 mod saida;
 

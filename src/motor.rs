@@ -8,6 +8,7 @@ use crate::descoberta;
 use crate::duplicacao::{self, Token};
 use crate::lang::{self, Import, Linguagem, Parsers};
 use crate::modelo::Violacao;
+use crate::recursos;
 use crate::regras::extras::Extras;
 use crate::regras::{self, Contexto, Supressao};
 use anyhow::Result;
@@ -36,6 +37,9 @@ pub struct Analise {
     pub anotacoes: Vec<(String, usize)>,
     /// Exceções instanciadas, para as regras de negócio (NEG001/002).
     pub excecoes: Vec<lang::ExcecaoCriada>,
+    /// Classes @Entity e parâmetros @RequestBody, para a SPR004.
+    pub entidades: Vec<String>,
+    pub corpos: Vec<lang::CorpoRequisicao>,
 }
 
 impl Analise {
@@ -55,6 +59,8 @@ impl Analise {
             tokens: Vec::new(),
             anotacoes: Vec::new(),
             excecoes: Vec::new(),
+            entidades: Vec::new(),
+            corpos: Vec::new(),
         }
     }
 
@@ -69,6 +75,8 @@ impl Analise {
         a.tokens = d.tokens.clone();
         a.anotacoes = d.anotacoes.clone();
         a.excecoes = d.excecoes.clone();
+        a.entidades = d.entidades.clone();
+        a.corpos = d.corpos.clone();
         a.do_cache = true;
         a
     }
@@ -84,6 +92,8 @@ impl Analise {
             tokens: self.tokens.clone(),
             anotacoes: self.anotacoes.clone(),
             excecoes: self.excecoes.clone(),
+            entidades: self.entidades.clone(),
+            corpos: self.corpos.clone(),
         }
     }
 }
@@ -114,6 +124,7 @@ pub fn analisar_fonte(
     a.imports = lang::imports(raiz_no, fonte);
     a.anotacoes = lang::anotacoes_de_tipo(raiz_no, fonte);
     a.excecoes = lang::excecoes_criadas(raiz_no, fonte);
+    (a.entidades, a.corpos) = lang::entidades_e_corpos(raiz_no, fonte);
 
     if raiz_no.has_error() {
         // Arquivo com erro de sintaxe não é pulado em silêncio: vira ERR000 e as outras
@@ -380,6 +391,13 @@ pub fn executar_com(
         arquitetura::ciclos(&projeto, &indice, &alvo)
     };
 
+    let spr004 = entidades_no_corpo(&todas, &alvo);
+    let recursos = recursos::verificar(
+        raiz,
+        &descoberta::recursos(raiz, &cfg.fontes)?,
+        quero.as_ref(),
+    );
+
     let mut analises: Vec<Analise> = todas
         .into_iter()
         .filter(|a| alvo.contains(a.arquivo.as_str()))
@@ -416,6 +434,8 @@ pub fn executar_com(
         ));
     }
     violacoes.extend(sml002);
+    violacoes.extend(spr004);
+    violacoes.extend(recursos);
     violacoes.extend(arq002);
     // Arquivos de teste: só as regras TST, fora do índice e da duplicação.
     for a in analises_teste {
@@ -501,4 +521,33 @@ fn duplicacoes(todas: &[Analise], alvo: &HashSet<&str>, minimo: usize) -> Duplic
 fn nome_do_arquivo(rel: &str) -> &str {
     let nome = rel.rsplit('/').next().unwrap_or(rel);
     nome.split('.').next().unwrap_or(nome)
+}
+
+/// SPR004: entidade JPA (de qualquer arquivo do projeto) recebida direto no @RequestBody.
+fn entidades_no_corpo(todas: &[Analise], alvo: &HashSet<&str>) -> Vec<Violacao> {
+    let entidades: HashSet<&str> = todas
+        .iter()
+        .flat_map(|a| a.entidades.iter().map(String::as_str))
+        .collect();
+    let mut v = Vec::new();
+    if entidades.is_empty() {
+        return v;
+    }
+    for a in todas.iter().filter(|a| alvo.contains(a.arquivo.as_str())) {
+        for c in &a.corpos {
+            if let Some(e) = c.tipos.iter().find(|t| entidades.contains(t.as_str())) {
+                v.push(Violacao::nova(
+                    "SPR004",
+                    &a.arquivo,
+                    c.linha,
+                    format!("entidade JPA {e} recebida direto no @RequestBody"),
+                    "receba um DTO e copie só os campos permitidos (atribuição em massa)",
+                    c.simbolo.clone(),
+                    e,
+                    None,
+                ));
+            }
+        }
+    }
+    v
 }

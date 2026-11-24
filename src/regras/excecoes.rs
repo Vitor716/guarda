@@ -38,7 +38,7 @@ fn simples(t: &str) -> &str {
 }
 
 /// (tipos pegos, nome da variável, bloco) de um catch.
-fn catch<'t>(
+pub(crate) fn catch<'t>(
     n: Node<'t>,
     fonte: &'t str,
     ling: Linguagem,
@@ -81,7 +81,7 @@ fn catch<'t>(
     }
 }
 
-fn ignorada_de_proposito(nome: &str) -> bool {
+pub(crate) fn ignorada_de_proposito(nome: &str) -> bool {
     let n = nome.to_lowercase();
     n == "_" || n.starts_with("ignore") || n.starts_with("expected")
 }

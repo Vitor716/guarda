@@ -285,6 +285,52 @@ pub fn anotacoes_de_tipo(raiz: Node, fonte: &str) -> Vec<(String, usize)> {
     v
 }
 
+/// Parâmetro recebido no corpo da requisição (`@RequestBody`): tipos citados na declaração.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CorpoRequisicao {
+    pub tipos: Vec<String>,
+    pub linha: usize,
+    pub simbolo: String,
+}
+
+/// Classes anotadas com @Entity e parâmetros @RequestBody do arquivo (para a SPR004).
+pub fn entidades_e_corpos(raiz: Node, fonte: &str) -> (Vec<String>, Vec<CorpoRequisicao>) {
+    use crate::regras::sintaxe::anotacoes;
+    let mut entidades = Vec::new();
+    let mut corpos = Vec::new();
+    visitar(raiz, |n| match n.kind() {
+        "class_declaration" if anotacoes(n, fonte).iter().any(|(a, _)| *a == "Entity") => {
+            if let Some(nome) = n.child_by_field_name("name") {
+                entidades.push(texto(nome, fonte).to_string());
+            }
+        }
+        "formal_parameter" | "parameter" => {
+            if !anotacoes(n, fonte).iter().any(|(a, _)| *a == "RequestBody") {
+                return;
+            }
+            let tipo = n.child_by_field_name("type").or_else(|| {
+                filhos(n)
+                    .into_iter()
+                    .find(|c| matches!(c.kind(), "user_type" | "nullable_type"))
+            });
+            let Some(tipo) = tipo else { return };
+            let mut tipos = Vec::new();
+            visitar(tipo, |x| {
+                if matches!(x.kind(), "type_identifier" | "identifier") {
+                    tipos.push(texto(x, fonte).to_string());
+                }
+            });
+            corpos.push(CorpoRequisicao {
+                tipos,
+                linha: linha(n),
+                simbolo: simbolo_dono(n, fonte),
+            });
+        }
+        _ => {}
+    });
+    (entidades, corpos)
+}
+
 /// Exceção instanciada no arquivo (`new XException(..)`, `XException(..)` no Kotlin), lançada
 /// ou não (ex.: `orElseThrow(() -> new X())`). Usada pelas regras de negócio (NEG001/002).
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

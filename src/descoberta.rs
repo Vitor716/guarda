@@ -75,6 +75,36 @@ pub fn listar_com_testes(raiz: &Path, fontes: &Fontes) -> Result<(Vec<String>, V
     Ok((sel, de_teste))
 }
 
+/// Configuração do Spring e arquivos de segredo (inclusive ocultos, como `.env`) que o
+/// git não ignora. Diretórios ocultos (`.git`, `.idea`) ficam de fora.
+pub fn recursos(raiz: &Path, fontes: &Fontes) -> Result<Vec<String>> {
+    let ignorar = globs(&fontes.ignorar)?;
+    let mut v = Vec::new();
+    for e in WalkBuilder::new(raiz)
+        .hidden(false)
+        .require_git(false)
+        .filter_entry(|e| {
+            e.depth() == 0
+                || !(e.file_type().is_some_and(|t| t.is_dir())
+                    && e.file_name().to_string_lossy().starts_with('.'))
+        })
+        .build()
+    {
+        let e = e?;
+        if !e.file_type().is_some_and(|t| t.is_file()) {
+            continue;
+        }
+        let Some(rel) = relativo(raiz, e.path()) else {
+            continue;
+        };
+        if crate::recursos::tipo(&rel).is_some() && !ignorar.is_match(&rel) {
+            v.push(rel);
+        }
+    }
+    v.sort();
+    Ok(v)
+}
+
 /// Arquivos alterados contra HEAD, incluindo os novos não rastreados.
 pub fn alterados(raiz: &Path) -> Result<Vec<String>> {
     let git = |args: &[&str]| -> Result<Vec<String>> {

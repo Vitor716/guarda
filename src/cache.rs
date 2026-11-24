@@ -71,6 +71,10 @@ pub struct Dados {
     pub anotacoes: Vec<(String, usize)>,
     #[serde(default)]
     pub excecoes: Vec<crate::lang::ExcecaoCriada>,
+    #[serde(default)]
+    pub entidades: Vec<String>,
+    #[serde(default)]
+    pub corpos: Vec<crate::lang::CorpoRequisicao>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

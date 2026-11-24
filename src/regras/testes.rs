@@ -89,8 +89,11 @@ pub fn verificar(ctx: &Contexto, v: &mut Vec<Violacao>) {
             let espera_excecao = anots.iter().any(|(nome, args, _)| *nome == "Test" && *args)
                 && texto(n, f).contains("expected");
             let pos = n.child_by_field_name("name").unwrap_or(n);
+            // contextLoads() vazio é o teste de fumaça do Spring: passa se o contexto sobe.
+            let fumaca = texto(pos, f) == "contextLoads";
             if eh_teste
                 && !espera_excecao
+                && !fumaca
                 && n.kind() != "class_declaration"
                 && !verifica_algo(n, f)
             {

@@ -1,5 +1,6 @@
 //! Regras por arquivo. As regras de projeto (ARQ001-004) ficam em `arquitetura`.
 
+pub mod bugs;
 pub mod complexidade;
 pub mod estrutura;
 pub mod excecoes;
@@ -7,7 +8,11 @@ pub mod extras;
 pub mod fluxo;
 pub mod java;
 pub mod kotlin;
+pub mod praticas;
+pub mod seguranca;
+pub mod sintaxe;
 pub mod smells;
+pub mod spring;
 pub mod supressao;
 pub mod testes;
 
@@ -35,6 +40,10 @@ pub fn por_arquivo(ctx: &Contexto) -> (Vec<Violacao>, Vec<Supressao>) {
     excecoes::verificar(ctx, &mut v);
     smells::verificar(ctx, &mut v);
     fluxo::verificar(ctx, &mut v);
+    seguranca::verificar(ctx, &mut v);
+    bugs::verificar(ctx, &mut v);
+    praticas::verificar(ctx, &mut v);
+    spring::verificar(ctx, &mut v);
     java::verificar(ctx, &mut v);
     extras::verificar(ctx, &mut v);
     if ctx.ling == Linguagem::Kotlin {

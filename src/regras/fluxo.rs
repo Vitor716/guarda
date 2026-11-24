@@ -22,12 +22,12 @@ const MIN_RAMOS_DE_TIPO: usize = 3;
 /// Casos constantes para o switch/when contar como "switch de tipo" (POL002).
 const MIN_CASOS: usize = 3;
 
-fn eh_if(kind: &str) -> bool {
+pub(crate) fn eh_if(kind: &str) -> bool {
     matches!(kind, "if_statement" | "if_expression")
 }
 
 /// (condição, então, senão) de um if das duas gramáticas.
-fn partes(n: Node) -> (Option<Node>, Option<Node>, Option<Node>) {
+pub(crate) fn partes(n: Node) -> (Option<Node>, Option<Node>, Option<Node>) {
     let cond = n.child_by_field_name("condition");
     if n.kind() == "if_statement" {
         return (
@@ -53,7 +53,7 @@ fn partes(n: Node) -> (Option<Node>, Option<Node>, Option<Node>) {
 }
 
 /// Instruções de um corpo: as do bloco, ou ele mesmo se não for bloco.
-fn instrucoes(corpo: Node) -> Vec<Node> {
+pub(crate) fn instrucoes(corpo: Node) -> Vec<Node> {
     if matches!(corpo.kind(), "block" | "control_structure_body") {
         filhos(corpo)
             .into_iter()
@@ -86,7 +86,7 @@ fn termina_em_desvio<'a>(corpo: Node, fonte: &'a str) -> Option<&'a str> {
 }
 
 /// O if é uma instrução (não o valor de uma expressão) e não é o `else if` de outro.
-fn if_de_instrucao(n: Node) -> bool {
+pub(crate) fn if_de_instrucao(n: Node) -> bool {
     let Some(p) = n.parent() else { return false };
     match n.kind() {
         "if_statement" => p.kind() != "if_statement",
@@ -172,6 +172,24 @@ fn ifs(ctx: &Contexto, n: Node, v: &mut Vec<Violacao>) {
         return;
     };
     let cond_txt = texto(cond, ctx.fonte);
+    // CND004: if sem else cujo corpo é só outro if sem else (Sonar S1066).
+    if senao.is_none() {
+        if let [unico] = instrucoes(entao)[..] {
+            let (_, interno_entao, interno_senao) = partes(unico);
+            if eh_if(unico.kind()) && interno_senao.is_none() && interno_entao.is_some() {
+                v.push(Violacao::nova(
+                    "CND004",
+                    ctx.arquivo,
+                    linha(n),
+                    "if dentro de if sem else: dá para juntar",
+                    "junte as condições com && (ou extraia para uma função com nome)",
+                    simbolo_dono(n, ctx.fonte),
+                    cond_txt,
+                    None,
+                ));
+            }
+        }
+    }
     if let Some(senao) = senao.filter(|s| !eh_if(s.kind())) {
         let saida_no_else = instrucoes(senao).len() == 1
             && termina_em_desvio(senao, ctx.fonte).is_some_and(|d| d == "return" || d == "throw");
