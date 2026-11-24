@@ -1,0 +1,30 @@
+[package]
+name = "guarda"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Linter determinístico para Kotlin e Java, com saída enxuta para IA"
+publish = false
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+[dependencies]
+anyhow = "1.0.105"
+blake3 = "1.8.7"
+clap = { version = "4.6.9", features = ["derive"] }
+globset = "0.4.22"
+ignore = "0.4.35"
+indexmap = { version = "2.14.2", features = ["serde"] }
+rayon = "1.12.0"
+regex = "1.13.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+serde_yaml = "0.9.34"
+tree-sitter = "0.27.2"
+tree-sitter-java = "0.23.5"
+tree-sitter-kotlin-ng = "1.1.0"
+
+[dev-dependencies]
+tempfile = "3.27.0"
