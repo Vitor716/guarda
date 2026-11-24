@@ -8,8 +8,8 @@ O problema que resolve: a IA trata skill e baseline como sugestão e foge do pad
 só reprova depois do push. A `guarda` é o portão objetivo que a IA precisa passar antes de
 terminar uma tarefa: mesmo código + mesmo `guarda.yml` + mesma versão = mesmo resultado.
 
-> Status: **Fase 3 em andamento (lote 1 de 2: 41 regras)**. A Fase 1 ainda está no portão
-> de uma semana de uso real; a Fase 2 aguarda a comparação com o Sonar num PR.
+> Status: **Fase 3 entregue (v0.3.0: 46 regras, 5 presets)**, portão da fase passou. A Fase 1
+> ainda está no portão de uma semana de uso real; a Fase 2 aguarda a comparação com o Sonar.
 > Ver [docs/fase-0.md](docs/fase-0.md), [docs/fase-1.md](docs/fase-1.md),
 > [docs/fase-2.md](docs/fase-2.md), [docs/fase-3.md](docs/fase-3.md) e o [roadmap](#roadmap).
 
@@ -28,7 +28,7 @@ guarda check [raiz]            # verifica e aplica o gate (exit 1 se houver viol
 guarda check --arquivos A B    # só esses arquivos (arquitetura vale pelo índice em cache)
 guarda check --alterados       # só o que mudou contra HEAD, incluindo arquivos novos
 guarda check --cobertura       # roda os testes antes, para a cobertura estar em dia
-guarda check --formato json    # um objeto JSON por linha
+guarda check --formato json    # um objeto JSON por linha (também: sarif, texto, compacto)
 guarda check --atualizar-baseline  # tira o que foi corrigido; nunca acrescenta
 guarda baseline gerar          # regrava o baseline (decisão humana: congela dívida nova)
 guarda explicar [CODIGO]       # por quê, errado e certo de uma regra (sem código: a lista)
@@ -134,6 +134,8 @@ sem falso positivo em projeto real. Detalhes em [docs/fase-3.md](docs/fase-3.md)
 | SML009 | TODO/FIXME sem ticket | detekt ForbiddenComment | — |
 | KT002–KT007 | GlobalScope, Thread.sleep em corrotina, suspend com Flow, Dispatchers fixo, data class com var, println | detekt | — |
 | JV001–JV005 | System.out, recurso sem try-with-resources, equals sem hashCode, Optional como campo/parâmetro, java.util.Date | PMD, Sonar | — |
+| TST001–TST003 | Teste sem asserção, Thread.sleep em teste, teste desativado sem motivo (só em `src/test`) | PMD, Sonar | — |
+| PRB001 / PRB002 | Import e tipo proibidos pelo `regras.proibir` do guarda.yml | política do time | erro |
 
 `guarda explicar <CODIGO>` mostra o porquê e um exemplo errado e certo de cada regra.
 
@@ -152,7 +154,7 @@ desconhecido é erro com linha (`guarda.yml:3 limites: unknown field ...`).
 ```yaml
 versao: 1
 arquitetura:
-  preset: hexagonal          # auto | hexagonal | clean | layered | nenhum
+  preset: hexagonal          # auto | hexagonal | clean | layered | mvvm | modular | nenhum
   base: com.empresa.app      # pacote base; padrões ".." casam abaixo dele
   camadas:                   # opcional: substitui as camadas do preset
     dominio: ["..domain.."]
@@ -180,8 +182,32 @@ duplicacao:                  # sem esta seção, duplicação não é verificada
   codigo-novo-maximo: 3      # %
 ```
 
-As seções `estende`, `perfil`, `regras.proibir` e `regras.personalizadas` já são aceitas
-(formato final), mas só têm efeito na Fase 3.
+Padrão do time, perfil e regras do projeto:
+
+```yaml
+estende: ../padrao-time.yml    # base; este arquivo sobrescreve chave a chave
+perfil: recomendado            # minimo | recomendado | rigoroso
+regras:
+  proibir:
+    imports: [java.util.Date, "org.joda.**"]
+    tipos-em-pacote:
+      - tipo: Double
+        pacote: "..calculo.."
+        dica: use BigDecimal em cálculo monetário
+  personalizadas: .guarda/regras  # um YAML por regra, com consulta do tree-sitter
+```
+
+Uma regra personalizada (`.guarda/regras/sem-stacktrace.yml`):
+
+```yaml
+codigo: USR001
+linguagem: java
+mensagem: chamada a printStackTrace
+dica: use o logger
+severidade: erro
+consulta: |
+  (method_invocation name: (identifier) @n (#eq? @n "printStackTrace")) @alvo
+```
 
 ## Como funciona
 

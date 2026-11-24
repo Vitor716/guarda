@@ -136,6 +136,106 @@ pub fn rodape(vs: &[Violacao], r: &Resumo) -> String {
 }
 
 /// Um objeto JSON por linha.
+/// SARIF 2.1.0, para code scanning (GitHub, Azure DevOps) e IDEs.
+pub fn sarif(vs: &[Violacao]) -> String {
+    use serde_json::json;
+    let mut codigos: Vec<&str> = vs.iter().map(|v| v.codigo).collect();
+    codigos.sort_unstable();
+    codigos.dedup();
+    let regras: Vec<serde_json::Value> = codigos
+        .iter()
+        .map(|c| {
+            let nome = crate::modelo::regra(c).map_or(*c, |r| r.nome);
+            let mut r = json!({ "id": c, "name": nome, "shortDescription": { "text": nome } });
+            if let Some(e) = crate::explicar::explicar(c) {
+                r["help"] = json!({ "text": e });
+            }
+            r
+        })
+        .collect();
+    let resultados: Vec<serde_json::Value> = vs
+        .iter()
+        .map(|v| {
+            let mut r = json!({
+                "ruleId": v.codigo,
+                "level": if v.severidade == Severidade::Erro { "error" } else { "warning" },
+                "message": { "text": format!("{} | {}", v.mensagem, v.dica) },
+            });
+            // `[cobertura]` e afins não são arquivos: ficam sem local.
+            if !v.arquivo.starts_with('[') {
+                r["locations"] = json!([{
+                    "physicalLocation": {
+                        "artifactLocation": { "uri": v.arquivo },
+                        "region": { "startLine": v.linha.max(1) }
+                    }
+                }]);
+            }
+            r
+        })
+        .collect();
+    let doc = json!({
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [{
+            "tool": { "driver": {
+                "name": "guarda",
+                "version": env!("CARGO_PKG_VERSION"),
+                "rules": regras
+            }},
+            "results": resultados
+        }]
+    });
+    serde_json::to_string_pretty(&doc).unwrap_or_default() + "\n"
+}
+
+/// Modo texto para pessoas: a saída compacta com cor (ANSI) e uma linha em branco entre
+/// arquivos. Só no terminal e sem `NO_COLOR`.
+pub fn texto(vs: &[Violacao], max: usize, r: &Resumo) -> String {
+    const NEGRITO: &str = "\x1b[1m";
+    const VERMELHO: &str = "\x1b[31m";
+    const AMARELO: &str = "\x1b[33m";
+    const VERDE: &str = "\x1b[32m";
+    const APAGADO: &str = "\x1b[2m";
+    const FIM: &str = "\x1b[0m";
+    let base = compacta(vs, max, r);
+    let mut s = String::new();
+    let mut primeiro = true;
+    for l in base.lines() {
+        if l.starts_with('✓') {
+            let _ = writeln!(s, "{VERDE}{l}{FIM}");
+        } else if l.starts_with('✗') {
+            let _ = writeln!(s, "{VERMELHO}{l}{FIM}");
+        } else if l.starts_with('+') {
+            let _ = writeln!(s, "{APAGADO}{l}{FIM}");
+        } else if !l.starts_with(' ') && !l.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+            if !primeiro {
+                s.push('\n');
+            }
+            primeiro = false;
+            let _ = writeln!(s, "{NEGRITO}{l}{FIM}");
+        } else {
+            // "  42 CPX001 mensagem | dica"
+            let (antes, dica) = l.split_once(" | ").unwrap_or((l, ""));
+            let mut partes = antes.trim_start().splitn(3, ' ');
+            let (num, cod, msg) = (
+                partes.next().unwrap_or(""),
+                partes.next().unwrap_or(""),
+                partes.next().unwrap_or(""),
+            );
+            let erro = vs
+                .iter()
+                .find(|v| v.codigo == cod)
+                .is_some_and(|v| v.severidade == Severidade::Erro);
+            let cor = if erro { VERMELHO } else { AMARELO };
+            let _ = writeln!(
+                s,
+                "{APAGADO}{num:>5}{FIM} {cor}{cod}{FIM} {msg}\n      {APAGADO}→ {dica}{FIM}"
+            );
+        }
+    }
+    s
+}
+
 pub fn json(vs: &[Violacao]) -> String {
     let mut s = String::new();
     for v in vs {
@@ -173,6 +273,50 @@ mod testes {
             "A.kt\n  1 KT001 x3 l.1,5,9 uso de !! | troque\nB.kt\n  2 KT001 uso de !! | troque\n\
              ✗ 4 erros em 2 arquivos · baseline 3 · 0,18s\n"
         );
+    }
+
+    #[test]
+    fn sarif_valido() {
+        let mut vs = vec![v("A.kt", 3, "KT001")];
+        vs.push(Violacao::nova(
+            "COV003",
+            "[cobertura]",
+            1,
+            "projeto 50%<60%",
+            "x",
+            "geral",
+            "",
+            Some(500),
+        ));
+        let s: serde_json::Value = serde_json::from_str(&sarif(&vs)).unwrap();
+        assert_eq!(s["version"], "2.1.0");
+        let run = &s["runs"][0];
+        assert_eq!(run["tool"]["driver"]["rules"].as_array().unwrap().len(), 2);
+        let r0 = &run["results"][0];
+        assert_eq!(r0["ruleId"], "KT001");
+        assert_eq!(r0["level"], "error");
+        assert_eq!(
+            r0["locations"][0]["physicalLocation"]["region"]["startLine"],
+            3
+        );
+        assert!(
+            run["results"][1].get("locations").is_none(),
+            "[cobertura] não é arquivo"
+        );
+    }
+
+    #[test]
+    fn texto_tem_cor_e_mesmo_conteudo() {
+        let vs = vec![v("A.kt", 3, "KT001")];
+        let r = Resumo {
+            congeladas: 0,
+            tempo: Duration::ZERO,
+            falhou: true,
+            nota: None,
+        };
+        let t = texto(&vs, 30, &r);
+        assert!(t.contains("\x1b[1mA.kt"), "{t:?}");
+        assert!(t.contains("KT001") && t.contains("→ troque"), "{t:?}");
     }
 
     #[test]

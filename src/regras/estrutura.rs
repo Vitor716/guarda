@@ -475,6 +475,8 @@ mod testes {
             ling,
             raiz: t.root_node(),
             limites: &lim,
+            pacote: None,
+            extras: None,
         };
         let (v, _) = super::super::por_arquivo(&ctx);
         v

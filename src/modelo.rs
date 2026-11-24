@@ -150,6 +150,23 @@ pub const REGRAS: &[Regra] = &[
         false,
     ),
     r("JV005", "java.util.Date/Calendar", Aviso, Aviso, false),
+    r("TST001", "teste sem asserção", Aviso, Erro, false),
+    r("TST002", "Thread.sleep em teste", Aviso, Aviso, false),
+    r("TST003", "teste desativado sem motivo", Aviso, Aviso, false),
+    r(
+        "PRB001",
+        "import proibido pelo guarda.yml",
+        Erro,
+        Erro,
+        false,
+    ),
+    r(
+        "PRB002",
+        "tipo proibido no pacote pelo guarda.yml",
+        Erro,
+        Erro,
+        false,
+    ),
     r("SUP001", "supressão sem motivo", Erro, Erro, false),
     r(
         "COV000",
@@ -169,6 +186,24 @@ pub const REGRAS: &[Regra] = &[
         false,
     ),
 ];
+
+/// Código com vida estática: os do catálogo direto; os das regras personalizadas, guardados
+/// uma vez só (o servidor MCP roda por muito tempo e não pode vazar a cada verificação).
+pub fn interno(codigo: &str) -> &'static str {
+    use std::collections::HashSet;
+    use std::sync::{LazyLock, Mutex};
+    static CODIGOS: LazyLock<Mutex<HashSet<&'static str>>> = LazyLock::new(Default::default);
+    if let Some(r) = regra(codigo) {
+        return r.codigo;
+    }
+    let mut c = CODIGOS.lock().expect("códigos");
+    if let Some(x) = c.get(codigo) {
+        return x;
+    }
+    let x: &'static str = Box::leak(codigo.to_string().into_boxed_str());
+    c.insert(x);
+    x
+}
 
 pub fn regra(codigo: &str) -> Option<&'static Regra> {
     REGRAS.iter().find(|r| r.codigo == codigo)

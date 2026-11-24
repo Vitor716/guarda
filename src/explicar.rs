@@ -11,6 +11,41 @@ pub struct Explicacao {
 
 pub const EXPLICACOES: &[Explicacao] = &[
     Explicacao {
+        codigo: "TST001",
+        titulo: "Teste sem asserção (PMD JUnitTestsShouldIncludeAssert)",
+        porque: "Teste que não verifica nada passa sempre: ele só mostra que o código não explodiu. Conta como asserção assert*, verify*, expect*, should*, then, check*, andExpect, coVerify e @Test(expected = ...).",
+        errado: "@Test void salva() { servico.salvar(pedido); }",
+        certo: "@Test void salva() { servico.salvar(pedido); verify(repo).save(pedido); }",
+    },
+    Explicacao {
+        codigo: "TST002",
+        titulo: "Thread.sleep em teste (Sonar S2925)",
+        porque: "Esperar um tempo fixo deixa o teste lento e instável: no CI o tempo pode não bastar.",
+        errado: "enviar(); Thread.sleep(2000); assertTrue(recebido());",
+        certo: "enviar(); await().atMost(5, SECONDS).until(this::recebido);",
+    },
+    Explicacao {
+        codigo: "TST003",
+        titulo: "Teste desativado sem motivo (Sonar S1607)",
+        porque: "Teste desativado sem motivo vira esquecido. Diga por quê e o ticket para reativar.",
+        errado: "@Disabled @Test void calcula() { ... }",
+        certo: "@Disabled(\"ABC-12: depende do serviço de frete\") @Test void calcula() { ... }",
+    },
+    Explicacao {
+        codigo: "PRB001",
+        titulo: "Import proibido pelo guarda.yml",
+        porque: "O time proibiu este import em regras.proibir.imports (ex.: uma biblioteca descontinuada).",
+        errado: "import org.joda.time.DateTime;",
+        certo: "import java.time.ZonedDateTime;",
+    },
+    Explicacao {
+        codigo: "PRB002",
+        titulo: "Tipo proibido no pacote pelo guarda.yml",
+        porque: "O time proibiu este tipo nestes pacotes em regras.proibir.tipos-em-pacote (ex.: Double em cálculo monetário).",
+        errado: "// em ..calculo..\nDouble total = preco * quantidade;",
+        certo: "BigDecimal total = preco.multiply(quantidade);",
+    },
+    Explicacao {
         codigo: "ARQ002",
         titulo: "Ciclo entre fatias do projeto (ArchUnit slices)",
         porque: "Fatia é cada pacote de primeiro nível abaixo do pacote base (domain, application, infrastructure...). Se A importa B e B importa A, as duas não podem mais mudar nem ser testadas separadamente.",

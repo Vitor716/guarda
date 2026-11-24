@@ -1,7 +1,7 @@
 # Fase 3 — Catálogo completo
 
 Portão da fase: **o `init` acerta o preset de arquitetura em 3 projetos diferentes**
-(de preferência um deles em Kotlin, que ainda não foi medido em código real).
+(de preferência um deles em Kotlin). **Passou** com o lote 2: ver o fim deste documento.
 
 A fase é entregue em lotes. Toda regra nova entra como **aviso** (risco da especificação:
 "regra nova entra como aviso antes de virar erro"); o catálogo guarda a severidade alvo
@@ -85,7 +85,46 @@ desenvolvimento, regra alterada sem mudar a versão lia resultado velho do cache
 - O binário instalado continua na 0.2.0 até o fim da semana de teste da Fase 1 no
   srv-usuario-api (~2026-12-01); depois, reinstalar e regerar o baseline de lá.
 
-## Lote 2 (a fazer)
+## Lote 2 (2026-11-24, v0.3.0)
 
-TST001-003 (exige analisar `src/test`), presets `mvvm` e `modular`, `regras.proibir`,
-regras personalizadas em YAML, `perfil`/`estende`, saída SARIF e modo texto.
+| Item | Como funciona |
+| --- | --- |
+| Código de teste | Arquivos de `fontes.testes` (`**/src/test/**`) são analisados só com as regras TST, fora do índice de arquitetura, da duplicação e da cobertura. |
+| TST001 teste sem asserção | Método com `@Test`/`@ParameterizedTest`/`@RepeatedTest` sem chamada a assert*, verify*, expect*, should* (inclusive infixo do Kotest), then, check*, andExpect, coVerify, await*; `@Test(expected = ...)` conta como asserção. `thenReturn` (stub do Mockito) não conta. |
+| TST002 Thread.sleep em teste | Java e Kotlin. |
+| TST003 teste desativado sem motivo | `@Disabled`/`@Ignore` sem argumento (ou com `""`). |
+| Preset `mvvm` | ui → viewmodel → dominio ← dados; ui também importa dominio; viewmodel não importa `android.view`/`android.widget` (ARQ003). |
+| Preset `modular` | Montado a partir dos pacotes: uma camada por `..feature.X..` e o `core` (`core`, `common`, `shared`); feature só importa core. |
+| `regras.proibir` | PRB001 import proibido (`a.b.C`, `a.b.*`, `a.b.**`); PRB002 tipo proibido em pacote (padrão ArchUnit). Entram como erro: é decisão explícita do time. |
+| Regras personalizadas | Pasta `regras.personalizadas`, um YAML por regra com `codigo` (ex.: USR001, não pode colidir com o catálogo), `linguagem`, `mensagem`, `dica`, `severidade`, `pacotes` opcional e `consulta` (consulta do tree-sitter com `#eq?`/`#match?`; a captura `@alvo` dá a linha). Erro de YAML ou de consulta aponta o arquivo. |
+| `perfil` | `minimo` desliga toda regra que hoje é aviso (menos GRD001) e folga os limites; `rigoroso` aperta os limites e usa a severidade alvo de toda regra; `recomendado` é o padrão. Limite declarado no guarda.yml sempre vence o perfil. |
+| `estende` | guarda.yml base (caminho relativo), recursivo até 5 níveis; o arquivo do projeto sobrescreve chave a chave, listas são trocadas inteiras. Erro na base aponta o arquivo dela. |
+| Saídas | `--formato sarif` (SARIF 2.1.0, com as regras e a explicação de cada uma) e `--formato texto` (com cor). Sem `--formato`: texto no terminal, compacto quando a saída vai para outro programa (IA, CI) ou com `NO_COLOR`. |
+
+**Diferença da especificação:** as regras personalizadas usam consulta do tree-sitter, não o
+formato `pattern`/`inside`/`not` do ast-grep. A consulta é exata e determinística e já vem no
+parser; um modo de padrão por trecho de código pode vir depois, se fizer falta.
+
+### Portão da Fase 3 — detecção de arquitetura em projetos reais
+
+Medido em cópias (nenhum arquivo escrito nos projetos):
+
+| Projeto | Linguagem | Organização | Detectado | Certo? |
+| --- | --- | --- | --- | --- |
+| srv-usuario-api | Java (277) | camadas no 1º nível | hexagonal 84% | sim |
+| contas-termometro-project | Kotlin (127) + Java (12) | por feature, camadas dentro | layered 71% | sim |
+| flow-study | Kotlin (83) | feature com api/application.port/domain/infrastructure | hexagonal 80% | sim |
+| contas-termometro | Kotlin (31) | por feature, camadas dentro | layered 64% | sim |
+| mensageria-pedidos | Kotlin (28) + Java (2) | camadas + messaging/outbox/worker | layered 43% (< 60%: não aplica) | ranking certo, confiança baixa |
+
+**Portão: passou** (4 de 5 acima de 60% e certos, 3 deles em Kotlin; o quinto não chuta).
+
+A primeira medição deu **0 de 4** nos projetos Kotlin: a nota olhava só o 1º nível de
+pacote abaixo da base, e três deles são organizados por feature (`backup.controller`,
+`studycard.application.port`). A nota passou a usar a fração de **pacotes distintos**
+classificados, em qualquer nível, e o desempate usa nomes exclusivos de cada estilo
+(`port`/`adapter` → hexagonal, `usecase`/`presentation` → clean, `viewmodel` → mvvm,
+`feature` → modular).
+
+**Parser Kotlin em código real (pendência da Fase 0):** 0 erros de parse em 271 arquivos
+Kotlin de 4 projetos.

@@ -29,7 +29,13 @@ pub fn relativo(raiz: &Path, caminho: &Path) -> Option<String> {
 
 /// Arquivos de produção Kotlin e Java, ordenados. Sem nenhum em `fontes.producao`
 /// (layout fora do padrão), analisa tudo que não for teste.
+#[allow(dead_code)]
 pub fn listar(raiz: &Path, fontes: &Fontes) -> Result<Vec<String>> {
+    Ok(listar_com_testes(raiz, fontes)?.0)
+}
+
+/// (produção, testes), ordenados, numa varredura só. Teste é o que casa `fontes.testes`.
+pub fn listar_com_testes(raiz: &Path, fontes: &Fontes) -> Result<(Vec<String>, Vec<String>)> {
     let producao = globs(&fontes.producao)?;
     let testes = globs(&fontes.testes)?;
     let ignorar = globs(&fontes.ignorar)?;
@@ -51,6 +57,11 @@ pub fn listar(raiz: &Path, fontes: &Fontes) -> Result<Vec<String>> {
         }
         todos.push(rel);
     }
+    let mut de_teste: Vec<String> = todos
+        .iter()
+        .filter(|r| testes.is_match(r))
+        .cloned()
+        .collect();
     let mut sel: Vec<String> = todos
         .iter()
         .filter(|r| producao.is_match(r))
@@ -60,7 +71,8 @@ pub fn listar(raiz: &Path, fontes: &Fontes) -> Result<Vec<String>> {
         sel = todos.into_iter().filter(|r| !testes.is_match(r)).collect();
     }
     sel.sort();
-    Ok(sel)
+    de_teste.sort();
+    Ok((sel, de_teste))
 }
 
 /// Arquivos alterados contra HEAD, incluindo os novos não rastreados.

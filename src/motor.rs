@@ -8,6 +8,7 @@ use crate::descoberta;
 use crate::duplicacao::{self, Token};
 use crate::lang::{self, Import, Linguagem, Parsers};
 use crate::modelo::Violacao;
+use crate::regras::extras::Extras;
 use crate::regras::{self, Contexto, Supressao};
 use anyhow::Result;
 use rayon::prelude::*;
@@ -27,6 +28,8 @@ pub struct Analise {
     pub tempo: Duration,
     /// Veio do cache, sem passar pelo parser.
     pub do_cache: bool,
+    /// Arquivo de teste: só as regras TST rodam nele e ele fica fora do índice.
+    pub teste: bool,
     /// Tokens para a detecção de duplicação.
     pub tokens: Vec<Token>,
     /// Anotações das classes (nome, linha), para as regras de arquitetura.
@@ -46,6 +49,7 @@ impl Analise {
             linhas: 0,
             tempo: Duration::ZERO,
             do_cache: false,
+            teste: false,
             tokens: Vec::new(),
             anotacoes: Vec::new(),
         }
@@ -80,9 +84,17 @@ impl Analise {
 }
 
 /// Roda as regras por arquivo sobre o conteúdo já lido.
-pub fn analisar_fonte(parsers: &mut Parsers, rel: &str, bruto: &[u8], cfg: &Config) -> Analise {
+pub fn analisar_fonte(
+    parsers: &mut Parsers,
+    rel: &str,
+    bruto: &[u8],
+    cfg: &Config,
+    teste: bool,
+    extras: &Extras,
+) -> Analise {
     let inicio = Instant::now();
     let mut a = Analise::vazia(rel);
+    a.teste = teste;
     let fonte = String::from_utf8_lossy(bruto);
     let fonte = fonte.strip_prefix('\u{feff}').unwrap_or(&fonte);
     a.linhas = fonte.lines().count();
@@ -121,11 +133,19 @@ pub fn analisar_fonte(parsers: &mut Parsers, rel: &str, bruto: &[u8], cfg: &Conf
             ling: a.ling,
             raiz: raiz_no,
             limites: &cfg.limites,
+            pacote: a.pacote.as_deref(),
+            extras: Some(extras),
         };
-        let (v, s) = regras::por_arquivo(&ctx);
+        let (v, s) = if teste {
+            regras::de_teste(&ctx)
+        } else {
+            regras::por_arquivo(&ctx)
+        };
         a.violacoes = v;
         a.supressoes = s;
-        a.tokens = duplicacao::tokens(raiz_no, fonte);
+        if !teste {
+            a.tokens = duplicacao::tokens(raiz_no, fonte);
+        }
     }
     a.tempo = inicio.elapsed();
     a
@@ -139,6 +159,22 @@ fn obter(
     rel: &str,
     cfg: &Config,
     c: &Cache,
+    teste: bool,
+    extras: &Extras,
+) -> (Analise, Option<Entrada>) {
+    let (mut a, nova) = obter_sem_marca(parsers, raiz, rel, cfg, c, teste, extras);
+    a.teste = teste;
+    (a, nova)
+}
+
+fn obter_sem_marca(
+    parsers: &mut Parsers,
+    raiz: &Path,
+    rel: &str,
+    cfg: &Config,
+    c: &Cache,
+    teste: bool,
+    extras: &Extras,
 ) -> (Analise, Option<Entrada>) {
     let caminho = raiz.join(rel);
     let assinatura = cache::assinatura(&caminho);
@@ -171,7 +207,7 @@ fn obter(
         };
         return (Analise::de_cache(rel, &e.dados), Some(nova));
     }
-    let a = analisar_fonte(parsers, rel, &bruto, cfg);
+    let a = analisar_fonte(parsers, rel, &bruto, cfg, teste, extras);
     let nova = c.ligado().then(|| Entrada {
         tamanho,
         modificado_ns,
@@ -242,29 +278,45 @@ pub fn executar_com(
     usar_cache: bool,
 ) -> Result<Relatorio> {
     let inicio = Instant::now();
-    let todos = descoberta::listar(raiz, &cfg.fontes)?;
-    let alvo: HashSet<&str> = match escopo {
-        Escopo::Tudo => todos.iter().map(String::as_str).collect(),
-        Escopo::Arquivos(lista) => {
-            let quero: HashSet<&str> = lista.iter().map(String::as_str).collect();
-            todos
-                .iter()
-                .map(String::as_str)
-                .filter(|r| quero.contains(r))
-                .collect()
-        }
+    let (todos, testes) = descoberta::listar_com_testes(raiz, &cfg.fontes)?;
+    let quero: Option<HashSet<&str>> = match escopo {
+        Escopo::Tudo => None,
+        Escopo::Arquivos(lista) => Some(lista.iter().map(String::as_str).collect()),
     };
+    let no_escopo = |r: &&str| quero.as_ref().is_none_or(|q| q.contains(r));
+    let alvo: HashSet<&str> = todos.iter().map(String::as_str).filter(no_escopo).collect();
+    let testes_alvo: Vec<&str> = testes
+        .iter()
+        .map(String::as_str)
+        .filter(no_escopo)
+        .collect();
 
+    let extras = Extras::carregar(raiz, cfg)?;
     // O projeto inteiro passa pelo cache: é o índice que mantém a arquitetura valendo
     // mesmo quando só um arquivo é verificado.
     let mut c = if usar_cache {
-        Cache::carregar(raiz, &cfg.impressao_regras())
+        Cache::carregar(
+            raiz,
+            &format!(
+                "{}|{}",
+                cfg.impressao_regras(),
+                Extras::impressao(raiz, cfg)
+            ),
+        )
     } else {
         Cache::desligado()
     };
     let resultados: Vec<(Analise, Option<Entrada>)> = todos
         .par_iter()
-        .map_init(Parsers::novo, |p, rel| obter(p, raiz, rel, cfg, &c))
+        .map_init(Parsers::novo, |p, rel| {
+            obter(p, raiz, rel, cfg, &c, false, &extras)
+        })
+        .collect();
+    let de_teste: Vec<(Analise, Option<Entrada>)> = testes_alvo
+        .par_iter()
+        .map_init(Parsers::novo, |p, rel| {
+            obter(p, raiz, rel, cfg, &c, true, &extras)
+        })
         .collect();
     let mut todas = Vec::with_capacity(resultados.len());
     for (a, nova) in resultados {
@@ -273,7 +325,14 @@ pub fn executar_com(
         }
         todas.push(a);
     }
-    c.manter_so(&todos.iter().map(String::as_str).collect());
+    let mut analises_teste = Vec::with_capacity(de_teste.len());
+    for (a, nova) in de_teste {
+        if let Some(e) = nova {
+            c.guardar(a.arquivo.clone(), e);
+        }
+        analises_teste.push(a);
+    }
+    c.manter_so(&todos.iter().chain(&testes).map(String::as_str).collect());
     c.salvar();
 
     let indice: Vec<ArquivoIndice> = todas
@@ -292,12 +351,13 @@ pub fn executar_com(
     let projeto = Projeto::novo(cfg.arquitetura.base.as_deref(), pacotes);
 
     let ranking = arquitetura::pontuar(&projeto, &indice);
-    let (arq, origem) = match arquitetura::da_config(&cfg.arquitetura)? {
+    let (arq, origem) = match arquitetura::da_config(&cfg.arquitetura, &projeto)? {
         Some(a) => (Some(a), Origem::Config),
         None => match ranking.first() {
-            Some(p) if p.nota >= arquitetura::CONFIANCA_MINIMA => {
-                (arquitetura::preset(&p.preset), Origem::Detectada)
-            }
+            Some(p) if p.nota >= arquitetura::CONFIANCA_MINIMA => (
+                arquitetura::preset_do_projeto(&p.preset, &projeto),
+                Origem::Detectada,
+            ),
             _ => (None, Origem::Indefinida),
         },
     };
@@ -313,7 +373,7 @@ pub fn executar_com(
         arquitetura::ciclos(&projeto, &indice, &alvo)
     };
 
-    let analises: Vec<Analise> = todas
+    let mut analises: Vec<Analise> = todas
         .into_iter()
         .filter(|a| alvo.contains(a.arquivo.as_str()))
         .collect();
@@ -343,23 +403,25 @@ pub fn executar_com(
     }
     violacoes.extend(sml002);
     violacoes.extend(arq002);
+    // Arquivos de teste: só as regras TST, fora do índice e da duplicação.
+    for a in analises_teste {
+        violacoes.extend(a.violacoes.iter().cloned());
+        analises.push(a);
+    }
 
     // Supressões com motivo, regras desligadas e severidade do guarda.yml.
     let supressoes: BTreeMap<&str, &Vec<Supressao>> = analises
         .iter()
         .map(|a| (a.arquivo.as_str(), &a.supressoes))
         .collect();
-    let desligadas: HashSet<&str> = cfg.regras.desligar.iter().map(String::as_str).collect();
     violacoes.retain(|v| {
-        !desligadas.contains(v.codigo)
+        !cfg.desligada(v.codigo)
             && !supressoes
                 .get(v.arquivo.as_str())
                 .is_some_and(|ss| ss.iter().any(|s| s.cobre(v.codigo, v.linha)))
     });
     for v in &mut violacoes {
-        if let Some(s) = cfg.regras.severidade.get(v.codigo) {
-            v.severidade = *s;
-        }
+        v.severidade = cfg.severidade(v.codigo, v.severidade);
     }
     violacoes.sort_by(|a, b| a.chave_ordem().cmp(&b.chave_ordem()));
 

@@ -74,6 +74,11 @@ impl Padrao {
         .is_some()
     }
 
+    /// Casa o pacote sem conhecer a base do projeto (regras por arquivo, em cache).
+    pub fn casa_sem_projeto(&self, pacote: &str) -> bool {
+        self.casar_com_tamanho(pacote, pacote, 0).is_some()
+    }
+
     /// Profundidade onde o padrão casou e quantos segmentos o trecho casado ocupa.
     fn casar_com_tamanho(
         &self,
@@ -109,6 +114,8 @@ pub struct Arquitetura {
     pub nome: String,
     pub camadas: Vec<Camada>,
     pub permitidas: HashSet<(String, String)>,
+    /// Imports de fora do projeto proibidos por camada (ARQ003), além de `sem-framework`.
+    pub externos: Vec<(String, Vec<String>)>,
 }
 
 /// O que se sabe do projeto inteiro: pacote base e pacotes declarados.
@@ -244,10 +251,57 @@ fn montar(nome: &str, camadas: &[(&str, &[&str])], arestas: &[(&str, &str)]) -> 
             .iter()
             .map(|(a, b)| (a.to_string(), b.to_string()))
             .collect(),
+        externos: Vec::new(),
     }
 }
 
-pub const PRESETS: &[&str] = &["hexagonal", "clean", "layered"];
+pub const PRESETS: &[&str] = &["hexagonal", "clean", "layered", "mvvm", "modular"];
+
+const CORE: &[&str] = &["core", "common", "commons", "shared"];
+
+/// Modular: uma camada por feature (`..feature.x..`/`..features.x..`) e o `core`. Cada feature
+/// só importa o core; feature importando outra feature é ARQ001.
+pub fn modular(projeto: &Projeto) -> Arquitetura {
+    let mut features: BTreeSet<(String, String)> = BTreeSet::new();
+    for p in &projeto.pacotes {
+        let segs: Vec<&str> = p.split('.').collect();
+        for w in segs.windows(2) {
+            if matches!(w[0], "feature" | "features") {
+                features.insert((w[0].to_string(), w[1].to_string()));
+            }
+        }
+    }
+    let mut camadas = vec![Camada {
+        nome: "core".into(),
+        padroes: CORE
+            .iter()
+            .map(|c| Padrao::novo(&format!("..{c}..")).expect("padrão do preset"))
+            .collect(),
+    }];
+    let mut permitidas = HashSet::new();
+    for (pai, f) in &features {
+        let nome = format!("feature-{f}");
+        camadas.push(Camada {
+            nome: nome.clone(),
+            padroes: vec![Padrao::novo(&format!("..{pai}.{f}..")).expect("padrão do preset")],
+        });
+        permitidas.insert((nome, "core".to_string()));
+    }
+    Arquitetura {
+        nome: "modular".into(),
+        camadas,
+        permitidas,
+        externos: Vec::new(),
+    }
+}
+
+/// Preset pelo nome; o modular depende dos pacotes do projeto.
+pub fn preset_do_projeto(nome: &str, projeto: &Projeto) -> Option<Arquitetura> {
+    if nome == "modular" {
+        return Some(modular(projeto));
+    }
+    preset(nome)
+}
 
 pub fn preset(nome: &str) -> Option<Arquitetura> {
     Some(match nome {
@@ -393,20 +447,68 @@ pub fn preset(nome: &str) -> Option<Arquitetura> {
                 ("repositorio", "modelo"),
             ],
         ),
+        "mvvm" => {
+            let mut a = montar(
+                "mvvm",
+                &[
+                    (
+                        "ui",
+                        &[
+                            "..ui..",
+                            "..view..",
+                            "..views..",
+                            "..screen..",
+                            "..screens..",
+                            "..compose..",
+                            "..activity..",
+                            "..fragment..",
+                        ],
+                    ),
+                    (
+                        "viewmodel",
+                        &["..viewmodel..", "..viewmodels..", "..presentation.."],
+                    ),
+                    ("dominio", &["..domain..", "..usecase..", "..usecases.."]),
+                    (
+                        "dados",
+                        &[
+                            "..data..",
+                            "..repository..",
+                            "..datasource..",
+                            "..remote..",
+                            "..local..",
+                            "..network..",
+                        ],
+                    ),
+                ],
+                &[
+                    ("ui", "viewmodel"),
+                    ("ui", "dominio"),
+                    ("viewmodel", "dominio"),
+                    ("dados", "dominio"),
+                ],
+            );
+            a.externos = vec![(
+                "viewmodel".into(),
+                vec!["android.view".into(), "android.widget".into()],
+            )];
+            a
+        }
         _ => return None,
     })
 }
 
 /// Arquitetura a partir do guarda.yml (preset nomeado, com camadas e exceções sobrescritas).
-pub fn da_config(cfg: &config::Arquitetura) -> Result<Option<Arquitetura>> {
+pub fn da_config(cfg: &config::Arquitetura, projeto: &Projeto) -> Result<Option<Arquitetura>> {
     let mut arq = match cfg.preset.as_str() {
         "auto" => return Ok(None),
         "nenhum" => Arquitetura {
             nome: "nenhum".into(),
             camadas: Vec::new(),
             permitidas: HashSet::new(),
+            externos: Vec::new(),
         },
-        nome => match preset(nome) {
+        nome => match preset_do_projeto(nome, projeto) {
             Some(a) => a,
             None => bail!(
                 "guarda.yml arquitetura.preset: {nome:?} não existe (use auto, nenhum, {})",
@@ -503,14 +605,23 @@ pub fn framework(
         let Some(camada) = a.pacote.and_then(|p| arq.camada_de(p, projeto)) else {
             continue;
         };
-        if !cfg.sem_framework.iter().any(|c| c == camada) {
+        let mut proibidos: Vec<&String> = Vec::new();
+        if cfg.sem_framework.iter().any(|c| c == camada) {
+            proibidos.extend(&cfg.frameworks);
+        }
+        for (c, ps) in &arq.externos {
+            if c == camada {
+                proibidos.extend(ps);
+            }
+        }
+        if proibidos.is_empty() {
             continue;
         }
         for imp in a.imports {
             if projeto.interno(&imp.pacote) {
                 continue;
             }
-            let Some(fw) = cfg.frameworks.iter().find(|f| comeca_com(&imp.pacote, f)) else {
+            let Some(fw) = proibidos.iter().find(|f| comeca_com(&imp.pacote, f)) else {
                 continue;
             };
             v.push(Violacao::nova(
@@ -692,30 +803,58 @@ pub struct Pontuacao {
     pub total: usize,
     pub com_violacao: usize,
     pub camadas_usadas: usize,
-    /// Pacotes de primeiro nível abaixo da base que o preset classifica.
-    pub topo_cobertos: usize,
-    pub topo_total: usize,
+    /// Pacotes distintos (abaixo da base) que o preset classifica.
+    pub pacotes_cobertos: usize,
+    pub pacotes_total: usize,
+    /// Nomes exclusivos do estilo achados nos pacotes (port, usecase, viewmodel...).
+    pub marcas: usize,
+}
+
+/// Nomes de pacote que só um estilo usa: desempatam presets que classificam igual.
+fn marcas_do_estilo(preset: &str) -> &'static [&'static str] {
+    match preset {
+        "hexagonal" => &[
+            "port", "ports", "adapter", "adapters", "inbound", "outbound",
+        ],
+        "clean" => &[
+            "usecase",
+            "usecases",
+            "interactor",
+            "interactors",
+            "presentation",
+        ],
+        "layered" => &["dao", "daos"],
+        "mvvm" => &["viewmodel", "viewmodels"],
+        "modular" => &["feature", "features"],
+        _ => &[],
+    }
 }
 
 /// Pontua cada preset pelos nomes de pacote e pelas violações que ele geraria.
 ///
-/// nota = média(fração dos pacotes de primeiro nível classificados, fração dos arquivos
-/// classificados) × (1 − metade da fração de arquivos com import proibido).
-/// Os pacotes de primeiro nível pesam porque são a decisão de arquitetura do projeto; as
-/// violações pesam pela metade porque um projeto real costuma ter desvios do próprio padrão,
-/// e um preset que deixa camadas inteiras de fora não pode ganhar só por isso.
+/// nota = média(fração dos pacotes distintos classificados, fração dos arquivos
+/// classificados) × (1 − metade da fração de arquivos com import proibido)
+/// + 0,02 por nome exclusivo do estilo (até 3).
+///
+/// Pacotes distintos, em qualquer nível, cobrem tanto o projeto organizado por camada
+/// (`controller`, `service` no 1º nível) quanto o organizado por feature
+/// (`pedido.controller`, `pedido.service`). As violações pesam pela metade porque projeto
+/// real tem desvios do próprio padrão, e um preset que deixa camadas inteiras de fora não
+/// pode ganhar só por isso.
 pub fn pontuar(projeto: &Projeto, arquivos: &[ArquivoIndice]) -> Vec<Pontuacao> {
-    let topo: BTreeSet<&str> = arquivos
+    let pacotes: BTreeSet<&str> = arquivos
         .iter()
         .filter_map(|a| a.pacote)
-        .map(|p| projeto.relativo(p))
-        .filter(|r| !r.is_empty())
-        .filter_map(|r| r.split('.').next())
+        .filter(|p| !projeto.relativo(p).is_empty())
+        .collect();
+    let segmentos: BTreeSet<&str> = pacotes
+        .iter()
+        .flat_map(|p| projeto.relativo(p).split('.'))
         .collect();
     let mut res: Vec<Pontuacao> = PRESETS
         .iter()
         .map(|nome| {
-            let arq = preset(nome).expect("preset");
+            let arq = preset_do_projeto(nome, projeto).expect("preset");
             let mut total = 0;
             let mut cobertos = 0;
             let mut usadas = BTreeSet::new();
@@ -731,33 +870,32 @@ pub fn pontuar(projeto: &Projeto, arquivos: &[ArquivoIndice]) -> Vec<Pontuacao> 
             for viol in verificar(&arq, projeto, arquivos) {
                 arquivos_com_violacao.insert(viol.arquivo);
             }
-            let topo_cobertos = topo
+            let pacotes_cobertos = pacotes
                 .iter()
-                .filter(|s| {
-                    let pkg = match &projeto.base {
-                        Some(b) if !b.is_empty() => format!("{b}.{s}"),
-                        _ => s.to_string(),
-                    };
-                    arq.camada_de(&pkg, projeto).is_some()
-                })
+                .filter(|p| arq.camada_de(p, projeto).is_some())
+                .count();
+            let marcas = marcas_do_estilo(nome)
+                .iter()
+                .filter(|m| segmentos.contains(*m))
                 .count();
             let nota = if total == 0 || usadas.len() < 2 {
                 0.0
             } else {
-                let t = topo_cobertos as f64 / topo.len().max(1) as f64;
+                let p = pacotes_cobertos as f64 / pacotes.len().max(1) as f64;
                 let c = cobertos as f64 / total as f64;
                 let v = arquivos_com_violacao.len() as f64 / cobertos.max(1) as f64;
-                (t + c) / 2.0 * (1.0 - v / 2.0)
+                (p + c) / 2.0 * (1.0 - v / 2.0) + 0.02 * marcas.min(3) as f64
             };
             Pontuacao {
                 preset: nome.to_string(),
-                nota,
+                nota: nota.min(1.0),
                 cobertos,
                 total,
                 com_violacao: arquivos_com_violacao.len(),
                 camadas_usadas: usadas.len(),
-                topo_cobertos,
-                topo_total: topo.len(),
+                pacotes_cobertos,
+                pacotes_total: pacotes.len(),
+                marcas,
             }
         })
         .collect();
@@ -845,6 +983,65 @@ mod testes {
             .collect();
         // domain ↔ infra é ciclo; application → domain não é.
         assert_eq!(ciclo, [("D", 4), ("I", 3)]);
+    }
+
+    #[test]
+    fn modular_feature_so_importa_core() {
+        let pacotes: HashSet<String> = [
+            "com.app.core.rede",
+            "com.app.feature.login",
+            "com.app.feature.login.ui",
+            "com.app.feature.pagamento",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let p = Projeto::novo(None, pacotes);
+        let arq = modular(&p);
+        assert_eq!(
+            arq.camada_de("com.app.feature.login.ui", &p),
+            Some("feature-login")
+        );
+        assert_eq!(arq.camada_de("com.app.core.rede", &p), Some("core"));
+        let imports = vec![
+            imp("com.app.core.rede", "Http", 3),
+            imp("com.app.feature.pagamento", "Cartao", 4),
+        ];
+        let arquivos = [ArquivoIndice {
+            arquivo: "Login.kt",
+            pacote: Some("com.app.feature.login"),
+            imports: &imports,
+            anotacoes: &[],
+        }];
+        let v = verificar(&arq, &p, &arquivos);
+        assert_eq!(v.len(), 1);
+        assert_eq!(
+            v[0].mensagem,
+            "feature-login importa feature-pagamento (Cartao)"
+        );
+    }
+
+    #[test]
+    fn mvvm_viewmodel_sem_android_view() {
+        let p = projeto("com.app");
+        let arq = preset("mvvm").unwrap();
+        let imports = vec![
+            imp("android.widget", "TextView", 2),
+            imp("androidx.lifecycle", "ViewModel", 3),
+        ];
+        let arquivos = [ArquivoIndice {
+            arquivo: "LoginViewModel.kt",
+            pacote: Some("com.app.viewmodel"),
+            imports: &imports,
+            anotacoes: &[],
+        }];
+        let cfg = config::Arquitetura::default();
+        let v = framework(&arq, &p, &arquivos, &cfg);
+        assert_eq!(v.len(), 1, "{v:?}");
+        assert_eq!(
+            v[0].mensagem,
+            "viewmodel usa framework (android.widget: TextView)"
+        );
     }
 
     #[test]

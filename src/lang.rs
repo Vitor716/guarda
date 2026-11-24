@@ -27,7 +27,7 @@ impl Linguagem {
         }
     }
 
-    fn gramatica(self) -> Language {
+    pub fn gramatica(self) -> Language {
         match self {
             Self::Java => tree_sitter_java::LANGUAGE.into(),
             Self::Kotlin => tree_sitter_kotlin_ng::LANGUAGE.into(),

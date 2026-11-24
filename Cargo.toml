@@ -1,6 +1,6 @@
-﻿[package]
+[package]
 name = "guarda"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Linter determinÃ­stico para Kotlin e Java, com saÃ­da enxuta para IA"
@@ -24,6 +24,7 @@ schemars = { version = "1.2.3", features = ["indexmap2"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
 serde_yaml = "0.9.34"
+streaming-iterator = "0.1.9"
 tree-sitter = "0.27.2"
 tree-sitter-java = "0.23.5"
 tree-sitter-kotlin-ng = "1.1.0"

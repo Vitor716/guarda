@@ -153,8 +153,14 @@ impl From<AgenteHook> for hook::Agente {
 
 #[derive(Clone, Copy, ValueEnum)]
 enum Formato {
+    /// Uma linha por violação (padrão fora do terminal: feito para IA)
     Compacto,
+    /// Um objeto JSON por linha
     Json,
+    /// SARIF 2.1.0 (code scanning, IDE)
+    Sarif,
+    /// Com cor, para pessoas (padrão no terminal)
+    Texto,
 }
 
 #[derive(clap::Args)]
@@ -167,8 +173,9 @@ struct CheckArgs {
     /// Só o que mudou contra HEAD, incluindo arquivos novos
     #[arg(long)]
     alterados: bool,
-    #[arg(long, value_enum, default_value = "compacto")]
-    formato: Formato,
+    /// Padrão: texto no terminal, compacto quando a saída vai para outro programa (IA, CI)
+    #[arg(long, value_enum)]
+    formato: Option<Formato>,
     /// Teto de linhas da saída compacta
     #[arg(long, default_value_t = 30)]
     max: usize,
@@ -297,17 +304,25 @@ fn check(a: CheckArgs) -> Result<ExitCode> {
         eprintln!("baseline: {} corrigida(s) removida(s)", r.corrigidas);
     }
     let falhou = r.falhou;
-    match a.formato {
-        Formato::Compacto => {
-            let resumo = saida::Resumo {
-                congeladas: r.congeladas,
-                tempo: r.tempo,
-                falhou,
-                nota: r.nota.clone(),
-            };
-            print!("{}", saida::compacta(&r.novas, a.max, &resumo));
+    let formato = a.formato.unwrap_or_else(|| {
+        use std::io::IsTerminal;
+        if std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none() {
+            Formato::Texto
+        } else {
+            Formato::Compacto
         }
+    });
+    let resumo = saida::Resumo {
+        congeladas: r.congeladas,
+        tempo: r.tempo,
+        falhou,
+        nota: r.nota.clone(),
+    };
+    match formato {
+        Formato::Compacto => print!("{}", saida::compacta(&r.novas, a.max, &resumo)),
+        Formato::Texto => print!("{}", saida::texto(&r.novas, a.max, &resumo)),
         Formato::Json => print!("{}", saida::json(&r.novas)),
+        Formato::Sarif => print!("{}", saida::sarif(&r.novas)),
     }
     Ok(if falhou {
         ExitCode::from(1)
@@ -587,14 +602,15 @@ fn medir(raiz: &Path) -> Result<()> {
     println!("{}", linha_arquitetura(&rel));
     for p in &rel.ranking {
         println!(
-            "  {}: {}/{} pacotes de 1º nível e {}/{} arquivos em camadas ({} camadas), {} com import proibido",
+            "  {}: {}/{} pacotes e {}/{} arquivos em camadas ({} camadas), {} com import proibido, {} marca(s) do estilo",
             p.preset,
-            p.topo_cobertos,
-            p.topo_total,
+            p.pacotes_cobertos,
+            p.pacotes_total,
             p.cobertos,
             p.total,
             p.camadas_usadas,
-            p.com_violacao
+            p.com_violacao,
+            p.marcas
         );
     }
     let cc_padrao = config::Cobertura::default();

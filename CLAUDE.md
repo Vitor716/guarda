@@ -18,9 +18,14 @@ cargo install --path . --locked         # atualiza o `guarda` do PATH (os hooks 
 - `src/regras/`: regras por arquivo. `complexidade.rs` (CPX001/CPX005), `estrutura.rs`
   (métricas de função e classe: CPX002-004, CPX006-009, SML001, JV003; tem o `percorrer` com
   poda), `excecoes.rs` (SML004-006), `smells.rs` (SML003, SML007-009), `java.rs` (JV001/002/
-  004/005), `kotlin.rs` (KT001-007), `supressao.rs` (SUP001 e `guarda:ignorar`).
-- `src/arquitetura.rs`: padrões ArchUnit, presets, detecção (`pontuar`), ARQ001, ARQ002
-  (ciclos entre fatias), ARQ003 (framework) e ARQ004 (controlador).
+  004/005), `kotlin.rs` (KT001-007), `supressao.rs` (SUP001 e `guarda:ignorar`), `testes.rs`
+  (TST001-003, só para arquivos de `fontes.testes`), `extras.rs` (PRB001/002 e regras
+  personalizadas por consulta do tree-sitter, carregadas uma vez por execução).
+- `src/arquitetura.rs`: padrões ArchUnit, presets (o `modular` é montado dos pacotes do
+  projeto: `preset_do_projeto`), detecção (`pontuar`: pacotes distintos + arquivos − violações
+  + marcas do estilo), ARQ001, ARQ002 (ciclos entre fatias), ARQ003 (framework) e ARQ004.
+- `src/config.rs`: também `estende` (mescla de YAML) e `perfil`; use `cfg.desligada()` e
+  `cfg.severidade()` em vez de ler `regras.desligar`/`regras.severidade` direto.
 - `src/motor.rs`: varre, analisa em paralelo (ou tira do `cache.rs`), monta o índice, aplica
   supressões e ordena.
 - `src/gate.rs`: motor + baseline + gate + GRD001; usado pelo `check` e pelos hooks.

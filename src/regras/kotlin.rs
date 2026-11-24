@@ -199,6 +199,8 @@ mod testes {
             ling: Linguagem::Kotlin,
             raiz: t.root_node(),
             limites: &lim,
+            pacote: None,
+            extras: None,
         };
         let mut v = Vec::new();
         verificar(&ctx, &mut v);

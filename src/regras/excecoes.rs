@@ -189,6 +189,8 @@ mod testes {
             ling,
             raiz: t.root_node(),
             limites: &lim,
+            pacote: None,
+            extras: None,
         };
         let mut v = Vec::new();
         verificar(&ctx, &mut v);

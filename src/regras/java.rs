@@ -153,15 +153,14 @@ fn java(ctx: &Contexto, v: &mut Vec<Violacao>) {
                 );
             }
         }
-        "formal_parameter"
-            if eh_optional(n.child_by_field_name("type"), f) => {
-                nova(
-                    "JV004",
-                    n,
-                    "Optional como parâmetro".into(),
-                    "receba o valor (anulável) ou crie duas versões da função",
-                );
-            }
+        "formal_parameter" if eh_optional(n.child_by_field_name("type"), f) => {
+            nova(
+                "JV004",
+                n,
+                "Optional como parâmetro".into(),
+                "receba o valor (anulável) ou crie duas versões da função",
+            );
+        }
         _ => {}
     });
 }
@@ -183,6 +182,8 @@ mod testes {
             ling,
             raiz: t.root_node(),
             limites: &lim,
+            pacote: None,
+            extras: None,
         };
         let mut v = Vec::new();
         verificar(&ctx, &mut v);

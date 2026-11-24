@@ -3,10 +3,12 @@
 pub mod complexidade;
 pub mod estrutura;
 pub mod excecoes;
+pub mod extras;
 pub mod java;
 pub mod kotlin;
 pub mod smells;
 pub mod supressao;
+pub mod testes;
 
 use crate::config::Limites;
 use crate::lang::{self, Linguagem, eh_funcao, eh_lambda, linha, simbolo_dono, visitar};
@@ -20,6 +22,10 @@ pub struct Contexto<'a> {
     pub ling: Linguagem,
     pub raiz: Node<'a>,
     pub limites: &'a Limites,
+    /// Pacote declarado no arquivo.
+    pub pacote: Option<&'a str>,
+    /// Regras do projeto (proibir, personalizadas).
+    pub extras: Option<&'a extras::Extras>,
 }
 
 pub fn por_arquivo(ctx: &Contexto) -> (Vec<Violacao>, Vec<Supressao>) {
@@ -28,9 +34,18 @@ pub fn por_arquivo(ctx: &Contexto) -> (Vec<Violacao>, Vec<Supressao>) {
     excecoes::verificar(ctx, &mut v);
     smells::verificar(ctx, &mut v);
     java::verificar(ctx, &mut v);
+    extras::verificar(ctx, &mut v);
     if ctx.ling == Linguagem::Kotlin {
         kotlin::verificar(ctx, &mut v);
     }
+    (v, supressoes)
+}
+
+/// Código de teste: só as regras de teste (e as diretivas `guarda:ignorar`).
+pub fn de_teste(ctx: &Contexto) -> (Vec<Violacao>, Vec<Supressao>) {
+    let (v, supressoes) = supressao::verificar(ctx.raiz, ctx.fonte, ctx.ling, ctx.arquivo);
+    let mut v: Vec<Violacao> = v.into_iter().filter(|x| x.codigo != "SUP001").collect();
+    testes::verificar(ctx, &mut v);
     (v, supressoes)
 }
 

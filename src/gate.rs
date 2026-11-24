@@ -160,13 +160,11 @@ fn coletar_em<'s, 'a: 's>(
             congelaveis.push(v);
         }
     }
-    pos_baseline.retain(|v| !cfg.regras.desligar.iter().any(|d| d == v.codigo));
+    pos_baseline.retain(|v| !cfg.desligada(v.codigo));
     for v in pos_baseline.iter_mut().chain(congelaveis.iter_mut()) {
-        if let Some(s) = cfg.regras.severidade.get(v.codigo) {
-            v.severidade = *s;
-        }
+        v.severidade = cfg.severidade(v.codigo, v.severidade);
     }
-    congelaveis.retain(|v| !cfg.regras.desligar.iter().any(|d| d == v.codigo));
+    congelaveis.retain(|v| !cfg.desligada(v.codigo));
     congelaveis.sort_by(|a, b| a.chave_ordem().cmp(&b.chave_ordem()));
     Ok(Coleta {
         rel,

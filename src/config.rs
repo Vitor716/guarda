@@ -1,14 +1,14 @@
 //! `guarda.yml`: opcional, tudo que não for declarado herda o padrão.
 //!
-//! Seções da especificação que ainda não têm efeito (estende, perfil, cobertura,
-//! duplicação, proibir, personalizadas) são aceitas para o arquivo já poder ser
-//! escrito no formato final, mas ignoradas nesta fase.
+//! Ordem de montagem: o arquivo de `estende` (recursivo) é a base; o guarda.yml do projeto
+//! sobrescreve chave a chave (listas são trocadas inteiras); os limites que ninguém declarou
+//! vêm do `perfil`.
 
-use crate::modelo::Severidade;
-use anyhow::Result;
+use crate::modelo::{self, Severidade};
+use anyhow::{Context, Result, bail};
 use indexmap::IndexMap;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 pub const ARQUIVO: &str = "guarda.yml";
@@ -22,12 +22,12 @@ pub const ARQUIVO_SCHEMA: &str = ".guarda/guarda.schema.json";
 pub struct Config {
     /// Versão do formato do arquivo.
     pub versao: Option<u32>,
-    /// Arquivo base a importar (ainda sem efeito: Fase 3).
-    #[schemars(with = "Option<serde_json::Value>")]
-    pub estende: Option<serde_yaml::Value>,
-    /// Perfil de limites (ainda sem efeito: hoje vale sempre o recomendado).
-    #[schemars(extend("enum" = ["minimo", "recomendado", "rigoroso"]))]
-    pub perfil: Option<String>,
+    /// guarda.yml base (caminho relativo a este arquivo), ex.: o padrão do time. Este arquivo
+    /// sobrescreve a base chave a chave.
+    pub estende: Option<String>,
+    /// `minimo`: só as regras que já são erro, limites folgados. `recomendado`: padrões do
+    /// detekt e do Sonar. `rigoroso`: limites apertados e toda regra na severidade alvo.
+    pub perfil: Option<Perfil>,
     pub fontes: Fontes,
     pub arquitetura: Arquitetura,
     pub limites: Limites,
@@ -37,6 +37,15 @@ pub struct Config {
     /// Código duplicado por tokens (estilo PMD CPD). Sem esta seção, não é verificada.
     pub duplicacao: Option<Duplicacao>,
     pub gate: Gate,
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Perfil {
+    Minimo,
+    #[default]
+    Recomendado,
+    Rigoroso,
 }
 
 /// Relatórios de cobertura: `auto` ou a lista de XMLs.
@@ -146,7 +155,7 @@ impl Default for Fontes {
 #[serde(rename_all = "kebab-case", deny_unknown_fields, default)]
 pub struct Arquitetura {
     /// `auto` detecta pelo nome dos pacotes; `nenhum` exige declarar camadas e `permitidas`.
-    #[schemars(extend("enum" = ["auto", "hexagonal", "clean", "layered", "nenhum"]))]
+    #[schemars(extend("enum" = ["auto", "hexagonal", "clean", "layered", "mvvm", "modular", "nenhum"]))]
     pub preset: String,
     /// Pacote base do projeto. Sem ele, é o prefixo comum dos pacotes declarados.
     pub base: Option<String>,
@@ -195,7 +204,7 @@ impl Default for Arquitetura {
 }
 
 /// Limites das regras de tamanho e complexidade. A violação é acima do limite.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields, default)]
 pub struct Limites {
     /// CPX005: linhas de código por função (sem brancos e comentários). detekt: 60.
@@ -216,6 +225,38 @@ pub struct Limites {
     pub funcoes_por_classe: u32,
     /// CPX009: `return` por função. detekt ReturnCount: 2.
     pub retornos: u32,
+}
+
+impl Limites {
+    /// Limites de cada perfil. Recomendado = padrões do detekt e do Sonar; os outros dois
+    /// são escolha da guarda (folga e aperto em torno deles).
+    pub fn do_perfil(p: Perfil) -> Self {
+        match p {
+            Perfil::Recomendado => Self::default(),
+            Perfil::Minimo => Self {
+                linhas_funcao: 100,
+                complexidade_cognitiva: 25,
+                complexidade_ciclomatica: 25,
+                aninhamento: 6,
+                condicao_operadores: 6,
+                linhas_classe: 1000,
+                parametros: 8,
+                funcoes_por_classe: 20,
+                retornos: 4,
+            },
+            Perfil::Rigoroso => Self {
+                linhas_funcao: 30,
+                complexidade_cognitiva: 10,
+                complexidade_ciclomatica: 10,
+                aninhamento: 3,
+                condicao_operadores: 3,
+                linhas_classe: 400,
+                parametros: 5,
+                funcoes_por_classe: 11,
+                retornos: 2,
+            },
+        }
+    }
 }
 
 impl Default for Limites {
@@ -243,12 +284,31 @@ pub struct Regras {
     pub desligar: Vec<String>,
     /// Severidade por código de regra.
     pub severidade: IndexMap<String, Severidade>,
-    /// Imports e tipos proibidos (ainda sem efeito: Fase 3).
-    #[schemars(with = "Option<serde_json::Value>")]
-    pub proibir: Option<serde_yaml::Value>,
-    /// Pasta de regras extras em YAML (ainda sem efeito: Fase 3).
-    #[schemars(with = "Option<serde_json::Value>")]
-    pub personalizadas: Option<serde_yaml::Value>,
+    /// Imports e tipos proibidos (PRB001, PRB002).
+    pub proibir: Proibir,
+    /// Pasta (relativa à raiz) com regras extras em YAML, uma por arquivo, escritas como
+    /// consulta do tree-sitter.
+    pub personalizadas: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields, default)]
+pub struct Proibir {
+    /// PRB001: imports proibidos. `a.b.C` (exato) ou `a.b.**` (o pacote e os de dentro).
+    pub imports: Vec<String>,
+    /// PRB002: tipos proibidos em pacotes (padrão ArchUnit).
+    pub tipos_em_pacote: Vec<TipoEmPacote>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct TipoEmPacote {
+    /// Nome simples do tipo (ex.: `Double`, `double`).
+    pub tipo: String,
+    /// Padrão de pacote (ex.: `..calculo..`).
+    pub pacote: String,
+    /// O que usar no lugar.
+    pub dica: Option<String>,
 }
 
 /// O que reprova a verificação.
@@ -277,6 +337,58 @@ impl Default for Gate {
     }
 }
 
+/// Lê um YAML validando-o sozinho primeiro, para o erro apontar arquivo e linha.
+fn ler_valor(texto: &str, nome: &str) -> Result<serde_yaml::Value> {
+    if texto.trim().is_empty() {
+        return Ok(serde_yaml::Value::Mapping(Default::default()));
+    }
+    let erro = |e: serde_yaml::Error| {
+        let linha = e.location().map(|l| l.line()).unwrap_or(0);
+        anyhow::anyhow!("{nome}:{linha} {e}")
+    };
+    serde_yaml::from_str::<Config>(texto).map_err(erro)?;
+    serde_yaml::from_str(texto).map_err(erro)
+}
+
+/// Lê o guarda.yml e a cadeia de `estende`, cada camada sobrescrevendo a de baixo.
+fn montar(caminho: &Path, profundidade: usize) -> Result<serde_yaml::Value> {
+    if profundidade > 5 {
+        bail!("estende encadeado demais (ciclo?) em {}", caminho.display());
+    }
+    let texto = std::fs::read_to_string(caminho)
+        .with_context(|| format!("não consegui ler {}", caminho.display()))?;
+    let nome = caminho
+        .file_name()
+        .map_or(ARQUIVO.into(), |n| n.to_string_lossy().to_string());
+    let v = ler_valor(&texto, &nome)?;
+    match v.get("estende").and_then(|e| e.as_str()) {
+        Some(base) => {
+            let dir = caminho.parent().unwrap_or(Path::new("."));
+            Ok(mesclar(montar(&dir.join(base), profundidade + 1)?, v))
+        }
+        None => Ok(v),
+    }
+}
+
+/// `cima` sobrescreve `base`; mapas são mesclados chave a chave, o resto é trocado.
+fn mesclar(base: serde_yaml::Value, cima: serde_yaml::Value) -> serde_yaml::Value {
+    use serde_yaml::Value;
+    match (base, cima) {
+        (Value::Mapping(mut b), Value::Mapping(c)) => {
+            for (k, vc) in c {
+                let novo = match b.remove(&k) {
+                    Some(vb) => mesclar(vb, vc),
+                    None => vc,
+                };
+                b.insert(k, novo);
+            }
+            Value::Mapping(b)
+        }
+        (b, Value::Null) => b,
+        (_, c) => c,
+    }
+}
+
 /// JSON Schema do guarda.yml (autocomplete e validação no editor e na IA).
 pub fn schema() -> String {
     let s = schemars::schema_for!(Config);
@@ -289,18 +401,54 @@ impl Config {
         if !caminho.exists() {
             return Ok(Self::default());
         }
-        let texto = std::fs::read_to_string(&caminho)?;
-        Self::de_texto(&texto)
+        Self::de_valor(montar(&caminho, 0)?)
     }
 
+    /// Só o texto, sem `estende` (usado pelo `init` e nos testes).
     pub fn de_texto(texto: &str) -> Result<Self> {
-        if texto.trim().is_empty() {
-            return Ok(Self::default());
+        Self::de_valor(ler_valor(texto, ARQUIVO)?)
+    }
+
+    /// Aplica o perfil aos limites não declarados e monta a configuração.
+    fn de_valor(mut v: serde_yaml::Value) -> Result<Self> {
+        let perfil: Perfil = match v.get("perfil") {
+            Some(p) => serde_yaml::from_value(p.clone()).context("guarda.yml perfil")?,
+            None => Perfil::default(),
+        };
+        let do_perfil = serde_yaml::to_value(Limites::do_perfil(perfil))?;
+        let declarados = v.get("limites").cloned().unwrap_or(serde_yaml::Value::Null);
+        if let serde_yaml::Value::Mapping(m) = &mut v {
+            m.insert("limites".into(), mesclar(do_perfil, declarados));
         }
-        serde_yaml::from_str(texto).map_err(|e| {
-            let linha = e.location().map(|l| l.line()).unwrap_or(0);
-            anyhow::anyhow!("{ARQUIVO}:{linha} {e}")
-        })
+        serde_yaml::from_value(v).context("guarda.yml")
+    }
+
+    pub fn perfil(&self) -> Perfil {
+        self.perfil.unwrap_or_default()
+    }
+
+    /// Severidade efetiva: a do guarda.yml; senão, no perfil rigoroso, a severidade alvo.
+    pub fn severidade(&self, codigo: &str, padrao: Severidade) -> Severidade {
+        if let Some(s) = self.regras.severidade.get(codigo) {
+            return *s;
+        }
+        match (self.perfil(), modelo::regra(codigo)) {
+            // A mais severa das duas (Erro < Aviso na ordem do enum).
+            (Perfil::Rigoroso, Some(r)) => padrao.min(r.alvo),
+            _ => padrao,
+        }
+    }
+
+    /// Regra desligada: pelo guarda.yml ou, no perfil mínimo, toda regra que hoje é aviso
+    /// (menos a GRD001, que protege a própria configuração).
+    pub fn desligada(&self, codigo: &str) -> bool {
+        if self.regras.desligar.iter().any(|d| d == codigo) {
+            return true;
+        }
+        self.perfil() == Perfil::Minimo
+            && codigo != "GRD001"
+            && !self.regras.severidade.contains_key(codigo)
+            && modelo::regra(codigo).is_some_and(|r| r.severidade == Severidade::Aviso)
     }
 
     /// Referência do git que define o código novo.
@@ -335,10 +483,13 @@ impl Config {
             })
             .unwrap_or_default();
         format!(
-            "{}|{binario}|{:?}|{:?}",
+            "{}|{binario}|{:?}|{:?}|{:?}|{:?}|{:?}",
             env!("CARGO_PKG_VERSION"),
             self.limites,
-            self.arquitetura.frameworks
+            self.arquitetura.frameworks,
+            self.regras.proibir,
+            self.regras.personalizadas,
+            self.fontes
         )
     }
 }
@@ -346,6 +497,47 @@ impl Config {
 #[cfg(test)]
 mod testes {
     use super::*;
+
+    #[test]
+    fn estende_e_perfil() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("base.yml"),
+            "perfil: rigoroso\nregras:\n  desligar: [SML003]\nlimites:\n  parametros: 9\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("guarda.yml"),
+            "estende: base.yml\nlimites:\n  retornos: 5\n",
+        )
+        .unwrap();
+        let c = Config::carregar(dir.path()).unwrap();
+        assert_eq!(c.perfil(), Perfil::Rigoroso);
+        assert_eq!(c.limites.parametros, 9, "da base");
+        assert_eq!(c.limites.retornos, 5, "do projeto");
+        assert_eq!(c.limites.linhas_funcao, 30, "do perfil");
+        assert!(c.desligada("SML003"));
+        assert_eq!(c.severidade("SML004", Severidade::Aviso), Severidade::Erro);
+        assert_eq!(c.severidade("SML002", Severidade::Erro), Severidade::Erro);
+    }
+
+    #[test]
+    fn perfil_minimo_desliga_os_avisos() {
+        let c = Config::de_texto("perfil: minimo").unwrap();
+        assert!(c.desligada("SML003"));
+        assert!(!c.desligada("KT001"));
+        assert!(!c.desligada("GRD001"));
+        assert_eq!(c.limites.linhas_funcao, 100);
+    }
+
+    #[test]
+    fn erro_na_base_aponta_o_arquivo_dela() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("time.yml"), "versao: 1\nlimite: 3\n").unwrap();
+        std::fs::write(dir.path().join("guarda.yml"), "estende: time.yml\n").unwrap();
+        let e = Config::carregar(dir.path()).unwrap_err().to_string();
+        assert!(e.starts_with("time.yml:2"), "{e}");
+    }
 
     #[test]
     fn vazio_usa_padrao() {

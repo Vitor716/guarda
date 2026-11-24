@@ -1,12 +1,12 @@
 //! Cache incremental em `.guarda/cache/`: o resultado das regras por arquivo, indexado pelo
-//! conteúdo. Arquivo com mesmo tamanho e data não é nem lido; com data nova, é lido e
-//! comparado pelo hash; só o que mudou passa pelo parser de novo.
+//! conteÃºdo. Arquivo com mesmo tamanho e data nÃ£o Ã© nem lido; com data nova, Ã© lido e
+//! comparado pelo hash; sÃ³ o que mudou passa pelo parser de novo.
 //!
-//! O cache nunca muda o resultado: a chave inclui a versão da guarda e os limites que
+//! O cache nunca muda o resultado: a chave inclui a versÃ£o da guarda e os limites que
 //! afetam as regras por arquivo. As regras de projeto (ARQ001) sempre rodam de novo.
 
 use crate::lang::Import;
-use crate::modelo::{Severidade, Violacao, regra};
+use crate::modelo::{Severidade, Violacao};
 use crate::regras::Supressao;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -42,12 +42,12 @@ impl ViolacaoSalva {
         }
     }
 
-    /// `None` se o código não existe mais nesta versão (o cache é descartado antes disso).
+    /// `None` se o cÃ³digo nÃ£o existe mais nesta versÃ£o (o cache Ã© descartado antes disso).
     pub fn para(&self, arquivo: &str) -> Option<Violacao> {
         Some(Violacao {
             arquivo: arquivo.to_string(),
             linha: self.linha,
-            codigo: regra(&self.codigo)?.codigo,
+            codigo: crate::modelo::interno(&self.codigo),
             severidade: self.severidade,
             mensagem: self.mensagem.clone(),
             dica: self.dica.clone(),
@@ -92,7 +92,7 @@ pub struct Cache {
     mudou: bool,
 }
 
-/// Tamanho e data de modificação, o atalho para nem abrir o arquivo.
+/// Tamanho e data de modificaÃ§Ã£o, o atalho para nem abrir o arquivo.
 pub fn assinatura(caminho: &Path) -> Option<(u64, u128)> {
     let m = std::fs::metadata(caminho).ok()?;
     let ns = m
@@ -109,7 +109,7 @@ pub fn hash(bytes: &[u8]) -> String {
 }
 
 impl Cache {
-    /// Cache desligado: nada é lido nem gravado.
+    /// Cache desligado: nada Ã© lido nem gravado.
     pub fn desligado() -> Self {
         Self {
             caminho: None,
@@ -150,14 +150,14 @@ impl Cache {
         }
     }
 
-    /// Tira do cache os arquivos que não existem mais.
+    /// Tira do cache os arquivos que nÃ£o existem mais.
     pub fn manter_so(&mut self, existentes: &std::collections::HashSet<&str>) {
         let antes = self.entradas.len();
         self.entradas.retain(|k, _| existentes.contains(k.as_str()));
         self.mudou |= self.entradas.len() != antes;
     }
 
-    /// Grava se algo mudou. Falha de escrita não derruba a verificação.
+    /// Grava se algo mudou. Falha de escrita nÃ£o derruba a verificaÃ§Ã£o.
     pub fn salvar(self) {
         let Some(caminho) = self.caminho else { return };
         if !self.mudou {
