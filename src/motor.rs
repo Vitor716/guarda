@@ -5,12 +5,13 @@ use crate::arquitetura::{self, Arquitetura, ArquivoIndice, Pontuacao, Projeto};
 use crate::cache::{self, Cache, Dados, Entrada, ViolacaoSalva};
 use crate::config::Config;
 use crate::descoberta;
+use crate::duplicacao::{self, Token};
 use crate::lang::{self, Import, Linguagem, Parsers};
 use crate::modelo::Violacao;
 use crate::regras::{self, Contexto, Supressao};
 use anyhow::Result;
 use rayon::prelude::*;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -26,6 +27,8 @@ pub struct Analise {
     pub tempo: Duration,
     /// Veio do cache, sem passar pelo parser.
     pub do_cache: bool,
+    /// Tokens para a detecção de duplicação.
+    pub tokens: Vec<Token>,
 }
 
 impl Analise {
@@ -41,6 +44,7 @@ impl Analise {
             linhas: 0,
             tempo: Duration::ZERO,
             do_cache: false,
+            tokens: Vec::new(),
         }
     }
 
@@ -52,6 +56,7 @@ impl Analise {
         a.supressoes = d.supressoes.clone();
         a.erro_parse = d.erro_parse;
         a.linhas = d.linhas;
+        a.tokens = d.tokens.clone();
         a.do_cache = true;
         a
     }
@@ -64,6 +69,7 @@ impl Analise {
             supressoes: self.supressoes.clone(),
             erro_parse: self.erro_parse,
             linhas: self.linhas,
+            tokens: self.tokens.clone(),
         }
     }
 }
@@ -113,6 +119,7 @@ pub fn analisar_fonte(parsers: &mut Parsers, rel: &str, bruto: &[u8], cfg: &Conf
         let (v, s) = regras::por_arquivo(&ctx);
         a.violacoes = v;
         a.supressoes = s;
+        a.tokens = duplicacao::tokens(raiz_no, fonte);
     }
     a.tempo = inicio.elapsed();
     a
@@ -203,6 +210,9 @@ pub struct Relatorio {
     pub ranking: Vec<Pontuacao>,
     pub projeto: Projeto,
     pub tempo: Duration,
+    /// Linhas duplicadas e linhas de código de cada arquivo do escopo (com `duplicacao`).
+    pub duplicadas: BTreeMap<String, BTreeSet<usize>>,
+    pub linhas_codigo: BTreeMap<String, BTreeSet<usize>>,
 }
 
 impl Relatorio {
@@ -285,6 +295,11 @@ pub fn executar_com(
         },
     };
 
+    let (sml002, duplicadas, linhas_codigo) = match &cfg.duplicacao {
+        Some(d) => duplicacoes(&todas, &alvo, d.tokens_minimos),
+        None => Default::default(),
+    };
+
     let analises: Vec<Analise> = todas
         .into_iter()
         .filter(|a| alvo.contains(a.arquivo.as_str()))
@@ -305,6 +320,7 @@ pub fn executar_com(
             .collect();
         violacoes.extend(arquitetura::verificar(arq, &projeto, &alvos));
     }
+    violacoes.extend(sml002);
 
     // Supressões com motivo, regras desligadas e severidade do guarda.yml.
     let supressoes: BTreeMap<&str, &Vec<Supressao>> = analises
@@ -333,5 +349,58 @@ pub fn executar_com(
         ranking,
         projeto,
         tempo: inicio.elapsed(),
+        duplicadas,
+        linhas_codigo,
     })
+}
+
+type Duplicacoes = (
+    Vec<Violacao>,
+    BTreeMap<String, BTreeSet<usize>>,
+    BTreeMap<String, BTreeSet<usize>>,
+);
+
+/// SML002 nos arquivos do escopo, procurando cópias no projeto inteiro.
+fn duplicacoes(todas: &[Analise], alvo: &HashSet<&str>, minimo: usize) -> Duplicacoes {
+    let validas: Vec<&Analise> = todas.iter().filter(|a| !a.erro_parse).collect();
+    let tokens: Vec<&[Token]> = validas.iter().map(|a| a.tokens.as_slice()).collect();
+    let blocos = duplicacao::detectar(&tokens, minimo);
+    let mut violacoes = Vec::new();
+    let mut duplicadas = BTreeMap::new();
+    let mut linhas_codigo = BTreeMap::new();
+    for (a, bs) in validas.iter().zip(&blocos) {
+        if !alvo.contains(a.arquivo.as_str()) {
+            continue;
+        }
+        linhas_codigo.insert(a.arquivo.clone(), duplicacao::linhas_de_codigo(&a.tokens));
+        duplicadas.insert(a.arquivo.clone(), duplicacao::linhas_duplicadas(bs));
+        for b in bs {
+            let outro = &validas[b.par.0].arquivo;
+            let nome = outro.rsplit('/').next().unwrap_or(outro);
+            let local = if outro == &a.arquivo {
+                format!("l.{}", b.par.1)
+            } else {
+                format!("{nome}:{}", b.par.1)
+            };
+            violacoes.push(Violacao::nova(
+                "SML002",
+                &a.arquivo,
+                b.linha_ini,
+                format!(
+                    "{} linhas duplicadas (também em {local})",
+                    b.linha_fim - b.linha_ini + 1
+                ),
+                "extraia para uma função ou classe compartilhada",
+                nome_do_arquivo(&a.arquivo),
+                &format!("{:016x}", b.digital),
+                None,
+            ));
+        }
+    }
+    (violacoes, duplicadas, linhas_codigo)
+}
+
+fn nome_do_arquivo(rel: &str) -> &str {
+    let nome = rel.rsplit('/').next().unwrap_or(rel);
+    nome.split('.').next().unwrap_or(nome)
 }

@@ -59,6 +59,36 @@ pub const REGRAS: &[Regra] = &[
         catraca: false,
     },
     Regra {
+        codigo: "SML002",
+        nome: "código duplicado",
+        severidade: Severidade::Aviso,
+        catraca: false,
+    },
+    Regra {
+        codigo: "COV000",
+        nome: "testes falharam ao gerar a cobertura",
+        severidade: Severidade::Erro,
+        catraca: false,
+    },
+    Regra {
+        codigo: "COV001",
+        nome: "cobertura do código novo",
+        severidade: Severidade::Erro,
+        catraca: false,
+    },
+    Regra {
+        codigo: "COV002",
+        nome: "cobertura por pacote",
+        severidade: Severidade::Erro,
+        catraca: true,
+    },
+    Regra {
+        codigo: "COV003",
+        nome: "cobertura geral",
+        severidade: Severidade::Erro,
+        catraca: true,
+    },
+    Regra {
         codigo: "GRD001",
         nome: "guarda.yml ou baseline alterado (revisão humana)",
         severidade: Severidade::Aviso,

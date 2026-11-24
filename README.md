@@ -8,33 +8,54 @@ O problema que resolve: a IA trata skill e baseline como sugestão e foge do pad
 só reprova depois do push. A `guarda` é o portão objetivo que a IA precisa passar antes de
 terminar uma tarefa: mesmo código + mesmo `guarda.yml` + mesma versão = mesmo resultado.
 
-> Status: **Fase 1 (MVP para a IA)**, aguardando o portão de uma semana de uso real.
-> Ver [docs/fase-0.md](docs/fase-0.md), [docs/fase-1.md](docs/fase-1.md) e o [roadmap](#roadmap).
+> Status: **Fase 2 (Sonar local + qualquer agente)**. A Fase 1 ainda está no portão de uma
+> semana de uso real; a Fase 2 aguarda a comparação com o Sonar num PR.
+> Ver [docs/fase-0.md](docs/fase-0.md), [docs/fase-1.md](docs/fase-1.md),
+> [docs/fase-2.md](docs/fase-2.md) e o [roadmap](#roadmap).
 
 ## Instalação
 
 ```bash
-cargo install --path .      # põe `guarda` no PATH (os hooks chamam pelo nome)
+cargo install --path .      # põe `guarda` no PATH (hooks, MCP e pre-commit chamam pelo nome)
 ```
 
 ## Uso
 
 ```bash
 guarda init [raiz]             # detecta a arquitetura, escreve guarda.yml, schema e baseline
-guarda init --ia claude        # ... e integra com o Claude Code (CLAUDE.md + hooks)
+guarda init --ia claude --ia git   # ... e integra com agentes (repita --ia)
 guarda check [raiz]            # verifica e aplica o gate (exit 1 se houver violação nova)
 guarda check --arquivos A B    # só esses arquivos (arquitetura vale pelo índice em cache)
 guarda check --alterados       # só o que mudou contra HEAD, incluindo arquivos novos
+guarda check --cobertura       # roda os testes antes, para a cobertura estar em dia
 guarda check --formato json    # um objeto JSON por linha
 guarda check --atualizar-baseline  # tira o que foi corrigido; nunca acrescenta
 guarda baseline gerar          # regrava o baseline (decisão humana: congela dívida nova)
+guarda explicar [CODIGO]       # por quê, errado e certo de uma regra (sem código: a lista)
 guarda contexto                # as regras do projeto em ~12 linhas, para o prompt da IA
-guarda integrar claude|agents  # contexto no CLAUDE.md/AGENTS.md (+ hooks, no Claude Code)
+guarda integrar <agente>       # claude | codex | antigravity | agents | git
+guarda mcp                     # servidor MCP por stdio: verificar, explicar, arquitetura
 guarda schema                  # JSON Schema do guarda.yml
-guarda medir [raiz]            # parse, tempo e violações por regra
+guarda medir [raiz]            # parse, tempo, violações, cobertura e código novo
 ```
 
-## Integração com o Claude Code
+## Qualquer agente de IA
+
+A verificação é uma CLI comum; o que muda por agente é só como ela chega até ele.
+
+| Agente | `guarda integrar ...` | O que escreve |
+| --- | --- | --- |
+| Claude Code | `claude` | `CLAUDE.md`, hooks em `.claude/settings.json`, MCP em `.mcp.json` |
+| Codex (ChatGPT) | `codex` | `AGENTS.md`, hooks em `.codex/hooks.json` (revise em `/hooks`); MCP: `[mcp_servers.guarda] command = "guarda" args = ["mcp"]` no `~/.codex/config.toml` |
+| Antigravity (Gemini) | `antigravity` | `AGENTS.md`, `.agents/hooks.json`, `.agents/mcp_config.json` |
+| Cursor, Copilot, outros | `agents` | `AGENTS.md` (e o MCP, se o agente aceitar: `guarda mcp`) |
+| Qualquer um, inclusive sem hook | `git` | pre-commit que roda `guarda check --alterados` |
+
+Os hooks leem o evento de cada agente, decidem do mesmo jeito e respondem no protocolo de
+cada um (`guarda hook <fase> --agente claude|codex|antigravity`); a tabela dos protocolos
+está em [docs/fase-2.md](docs/fase-2.md).
+
+### Claude Code
 
 `guarda integrar claude` (ou `init --ia claude`) acrescenta ao `.claude/settings.json`, sem
 mexer no resto:
@@ -52,7 +73,8 @@ mexer no resto:
 ```
 
 - **proteger**: a IA não edita `guarda.yml`, `.guarda/`, o plugin de cobertura do build nem
-  os hooks, e não roda `guarda baseline`/`guarda init`.
+  a integração (hooks, MCP, pre-commit), e não roda `guarda baseline`, `guarda init` nem
+  `git commit --no-verify`.
 - **pos-edicao**: verifica o arquivo recém-editado; violação nova volta para a IA na hora.
 - **final**: antes de encerrar, verifica o que mudou; segura a IA até 3 vezes
   (`gate.tentativas-final`) e depois libera, deixando o relatório em `.guarda/cache/final.txt`.
@@ -81,6 +103,13 @@ Tudo certo é uma linha só: `✓ guarda 0 erros · baseline 412 · 0,04s`.
 | KT001 | Uso de `!!` | detekt UnsafeCallOnNullableType | erro |
 | SUP001 | `@Suppress`/`@SuppressWarnings` ou `guarda:ignorar` sem motivo | política da guarda | erro |
 | GRD001 | `guarda.yml` ou baseline alterado no diff (só em `--alterados`) | política da guarda | aviso |
+| SML002 | Código duplicado (bloco: aviso; código novo acima do máximo: erro) | PMD CPD, Sonar | ≥ 100 tokens, ≤ 3% novo |
+| COV000 | Testes falharam no `--cobertura` | política da guarda | erro |
+| COV001 | Cobertura do código novo | Sonar Quality Gate | ≥ 80% |
+| COV002 | Cobertura por pacote | Sonar Quality Gate | config |
+| COV003 | Cobertura geral (catraca) | Sonar Quality Gate | config |
+
+`guarda explicar <CODIGO>` mostra o porquê e um exemplo errado e certo de cada regra.
 
 Supressão pontual, sempre com motivo (vale para a linha do comentário e a seguinte):
 
@@ -113,10 +142,20 @@ gate:
   falhar-em: erro            # erro | aviso
   baseline: .guarda/baseline.json
   tentativas-final: 3        # quantas vezes o hook final segura a IA
+cobertura:                   # sem esta seção, cobertura não é verificada
+  relatorio: auto            # acha o XML do JaCoCo/Kover em cada módulo
+  codigo-novo: { referencia: origin/main, minimo: 80 }
+  geral-minimo: 60
+  por-pacote: { "..calculo..": 95 }
+  ignorar: ["**/*Config.java", "**/dto/**"]
+  rodar-no-final: false      # o hook final roda os testes antes (lento)
+duplicacao:                  # sem esta seção, duplicação não é verificada
+  tokens-minimos: 100
+  codigo-novo-maximo: 3      # %
 ```
 
-As seções `cobertura`, `duplicacao`, `estende`, `perfil`, `regras.proibir` e
-`regras.personalizadas` já são aceitas (formato final), mas só têm efeito nas próximas fases.
+As seções `estende`, `perfil`, `regras.proibir` e `regras.personalizadas` já são aceitas
+(formato final), mas só têm efeito na Fase 3.
 
 ## Como funciona
 

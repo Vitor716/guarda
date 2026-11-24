@@ -9,6 +9,8 @@ pub struct Resumo {
     pub congeladas: usize,
     pub tempo: Duration,
     pub falhou: bool,
+    /// Observação curta para o rodapé (ex.: cobertura desatualizada).
+    pub nota: Option<String>,
 }
 
 pub fn segundos(d: Duration) -> String {
@@ -123,6 +125,9 @@ pub fn rodape(vs: &[Violacao], r: &Resumo) -> String {
             if avisos == 1 { "aviso" } else { "avisos" }
         ));
     }
+    if let Some(n) = &r.nota {
+        partes.push(n.clone());
+    }
     if r.congeladas > 0 {
         partes.push(format!("baseline {}", r.congeladas));
     }
@@ -160,6 +165,7 @@ mod testes {
             congeladas: 3,
             tempo: Duration::from_millis(180),
             falhou: true,
+            nota: None,
         };
         let s = compacta(&vs, 30, &r);
         assert_eq!(
@@ -175,6 +181,7 @@ mod testes {
             congeladas: 0,
             tempo: Duration::from_millis(120),
             falhou: false,
+            nota: None,
         };
         assert_eq!(compacta(&[], 30, &r), "✓ guarda 0 erros · 0,12s\n");
     }
@@ -188,6 +195,7 @@ mod testes {
             congeladas: 0,
             tempo: Duration::ZERO,
             falhou: true,
+            nota: None,
         };
         let s = compacta(&vs, 4, &r);
         assert!(s.contains("+8 ocultas"), "{s}");

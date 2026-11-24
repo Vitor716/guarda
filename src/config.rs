@@ -32,13 +32,86 @@ pub struct Config {
     pub arquitetura: Arquitetura,
     pub limites: Limites,
     pub regras: Regras,
-    /// Cobertura de código (ainda sem efeito: Fase 2).
-    #[schemars(with = "Option<serde_json::Value>")]
-    pub cobertura: Option<serde_yaml::Value>,
-    /// Duplicação de código (ainda sem efeito: Fase 2).
-    #[schemars(with = "Option<serde_json::Value>")]
-    pub duplicacao: Option<serde_yaml::Value>,
+    /// Cobertura de testes lida do XML do JaCoCo/Kover. Sem esta seção, não é verificada.
+    pub cobertura: Option<Cobertura>,
+    /// Código duplicado por tokens (estilo PMD CPD). Sem esta seção, não é verificada.
+    pub duplicacao: Option<Duplicacao>,
     pub gate: Gate,
+}
+
+/// Relatórios de cobertura: `auto` ou a lista de XMLs.
+#[derive(Debug, Deserialize, JsonSchema, Clone)]
+#[serde(untagged)]
+pub enum Relatorios {
+    /// `auto`: procura o XML do JaCoCo e do Kover em cada módulo.
+    Um(String),
+    /// Caminhos dos XMLs, relativos à raiz.
+    Varios(Vec<String>),
+}
+
+impl Default for Relatorios {
+    fn default() -> Self {
+        Self::Um("auto".into())
+    }
+}
+
+/// Cobertura no estilo do Quality Gate "Sonar way".
+#[derive(Debug, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields, default)]
+pub struct Cobertura {
+    pub relatorio: Relatorios,
+    pub codigo_novo: CodigoNovo,
+    /// COV003: cobertura mínima do projeto inteiro (%).
+    pub geral_minimo: Option<f64>,
+    /// COV002: cobertura mínima por pacote (padrão ArchUnit → %).
+    pub por_pacote: IndexMap<String, f64>,
+    /// Arquivos fora da conta (globs relativos à raiz).
+    pub ignorar: Vec<String>,
+    /// Comando que roda os testes e gera o XML (`check --cobertura`). Padrão: pelo build.
+    pub comando: Option<String>,
+    /// O hook `final` roda os testes antes de verificar (lento: desligado por padrão).
+    pub rodar_no_final: bool,
+}
+
+/// O que conta como código novo e quanto dele precisa de teste.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields, default)]
+pub struct CodigoNovo {
+    /// Referência do git: código novo = diferença desde o ancestral comum com ela.
+    pub referencia: String,
+    /// COV001: cobertura mínima do código novo (%). Sonar way: 80.
+    pub minimo: f64,
+}
+
+impl Default for CodigoNovo {
+    fn default() -> Self {
+        Self {
+            referencia: "origin/main".into(),
+            minimo: 80.0,
+        }
+    }
+}
+
+/// Duplicação por tokens (Karp-Rabin, como o PMD CPD).
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields, default)]
+pub struct Duplicacao {
+    /// Tamanho mínimo de um bloco duplicado, em tokens.
+    pub tokens_minimos: usize,
+    /// Máximo de linhas duplicadas no código novo (%). Sonar way: 3.
+    pub codigo_novo_maximo: f64,
+    /// Referência do código novo, se não houver seção `cobertura`.
+    pub referencia: Option<String>,
+}
+
+impl Default for Duplicacao {
+    fn default() -> Self {
+        Self {
+            tokens_minimos: 100,
+            codigo_novo_maximo: 3.0,
+            referencia: None,
+        }
+    }
 }
 
 /// Quais arquivos entram na análise (globs relativos à raiz).
@@ -195,10 +268,27 @@ impl Config {
         })
     }
 
+    /// Referência do git que define o código novo.
+    pub fn referencia(&self) -> &str {
+        self.cobertura
+            .as_ref()
+            .map(|c| c.codigo_novo.referencia.as_str())
+            .or_else(|| {
+                self.duplicacao
+                    .as_ref()
+                    .and_then(|d| d.referencia.as_deref())
+            })
+            .unwrap_or("origin/main")
+    }
+
+    pub fn cobertura_no_final(&self) -> bool {
+        self.cobertura.as_ref().is_some_and(|c| c.rodar_no_final)
+    }
+
     /// Impressão digital do que muda o resultado das regras por arquivo (para o cache).
     pub fn impressao_regras(&self) -> String {
         format!(
-            "{}|{}|{}",
+            "{}|{}|{}|tokens1",
             env!("CARGO_PKG_VERSION"),
             self.limites.linhas_funcao,
             self.limites.complexidade_cognitiva

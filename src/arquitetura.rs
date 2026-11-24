@@ -64,6 +64,16 @@ impl Padrao {
             .map(|(d, _)| d)
     }
 
+    /// O pacote casa com o padrão (relativo ao pacote base do projeto, se começar com `..`)?
+    pub fn casa_pacote(&self, pacote: &str, projeto: &Projeto) -> bool {
+        self.casar_com_tamanho(
+            pacote,
+            projeto.relativo(pacote),
+            projeto.profundidade_base(),
+        )
+        .is_some()
+    }
+
     /// Profundidade onde o padrão casou e quantos segmentos o trecho casado ocupa.
     fn casar_com_tamanho(
         &self,

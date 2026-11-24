@@ -3,12 +3,17 @@
 mod arquitetura;
 mod baseline;
 mod cache;
+mod cobertura;
+mod codigo_novo;
 mod config;
 mod descoberta;
+mod duplicacao;
+mod explicar;
 mod gate;
 mod hook;
 mod integracao;
 mod lang;
+mod mcp;
 mod modelo;
 mod motor;
 mod regras;
@@ -46,9 +51,9 @@ enum Cmd {
         /// Sobrescreve um guarda.yml existente
         #[arg(long)]
         forcar: bool,
-        /// Também integra com o agente (contexto no CLAUDE.md/AGENTS.md e hooks)
+        /// Também integra com agentes (repita: --ia claude --ia codex --ia git)
         #[arg(long, value_enum)]
-        ia: Option<AgenteArg>,
+        ia: Vec<AgenteArg>,
     },
     /// Baseline do legado
     Baseline {
@@ -65,15 +70,28 @@ enum Cmd {
         #[arg(default_value = ".")]
         raiz: PathBuf,
     },
-    /// Escreve o contexto no CLAUDE.md (e os hooks no .claude/settings.json) ou no AGENTS.md
+    /// Integra com um agente: instruções, hooks e MCP (ou o pre-commit do git)
     Integrar {
         #[arg(value_enum)]
         agente: AgenteArg,
         #[arg(default_value = ".")]
         raiz: PathBuf,
     },
-    /// Hook do Claude Code: lê o evento no stdin (proteger | pos-edicao | final)
-    Hook { evento: String },
+    /// Hook de agente: lê o evento no stdin e responde no protocolo do agente
+    Hook {
+        /// proteger | pos-edicao | final
+        evento: String,
+        #[arg(long, value_enum, default_value = "claude")]
+        agente: AgenteHook,
+    },
+    /// Explica uma regra (por quê, errado, certo); sem código, lista as regras
+    Explicar { codigo: Option<String> },
+    /// Servidor MCP por stdio (verificar, explicar, arquitetura) para qualquer agente
+    Mcp {
+        /// Raiz do projeto (padrão: o diretório com guarda.yml acima do atual)
+        #[arg(long)]
+        raiz: Option<PathBuf>,
+    },
     /// Imprime o JSON Schema do guarda.yml
     Schema,
     /// Imprime a árvore sintática de um arquivo (para escrever regras)
@@ -92,17 +110,43 @@ enum BaselineCmd {
 
 #[derive(Clone, Copy, ValueEnum)]
 enum AgenteArg {
-    /// Claude Code: CLAUDE.md e hooks em .claude/settings.json
+    /// Claude Code: CLAUDE.md, hooks em .claude/settings.json, MCP em .mcp.json
     Claude,
-    /// Outros agentes: AGENTS.md
+    /// Codex (ChatGPT): AGENTS.md e hooks em .codex/hooks.json
+    Codex,
+    /// Antigravity (Gemini): AGENTS.md, .agents/hooks.json e .agents/mcp_config.json
+    Antigravity,
+    /// Qualquer agente que leia AGENTS.md (Cursor, Copilot...)
     Agents,
+    /// Hook de pre-commit: barra o commit de qualquer IA ou pessoa
+    Git,
 }
 
 impl From<AgenteArg> for integracao::Agente {
     fn from(a: AgenteArg) -> Self {
         match a {
             AgenteArg::Claude => Self::Claude,
+            AgenteArg::Codex => Self::Codex,
+            AgenteArg::Antigravity => Self::Antigravity,
             AgenteArg::Agents => Self::Agents,
+            AgenteArg::Git => Self::Git,
+        }
+    }
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum AgenteHook {
+    Claude,
+    Codex,
+    Antigravity,
+}
+
+impl From<AgenteHook> for hook::Agente {
+    fn from(a: AgenteHook) -> Self {
+        match a {
+            AgenteHook::Claude => Self::Claude,
+            AgenteHook::Codex => Self::Codex,
+            AgenteHook::Antigravity => Self::Antigravity,
         }
     }
 }
@@ -134,6 +178,9 @@ struct CheckArgs {
     /// Tira do baseline o que foi corrigido e aperta a catraca (nunca acrescenta)
     #[arg(long)]
     atualizar_baseline: bool,
+    /// Roda os testes antes, para a cobertura refletir o código atual
+    #[arg(long)]
+    cobertura: bool,
 }
 
 fn main() -> ExitCode {
@@ -150,7 +197,29 @@ fn main() -> ExitCode {
             .and_then(|cfg| integracao::contexto(&raiz, &cfg))
             .map(|t| print!("{t}"))),
         Cmd::Integrar { agente, raiz } => ok(integrar(&raiz, agente)),
-        Cmd::Hook { evento } => return rodar_hook(&evento),
+        Cmd::Hook { evento, agente } => return rodar_hook(&evento, agente.into()),
+        Cmd::Explicar { codigo } => match codigo {
+            None => {
+                print!("{}", explicar::lista());
+                Ok(ExitCode::SUCCESS)
+            }
+            Some(c) => match explicar::explicar(&c) {
+                Some(t) => {
+                    print!("{t}");
+                    Ok(ExitCode::SUCCESS)
+                }
+                None => Err(anyhow::anyhow!(
+                    "regra desconhecida: {c} (veja `guarda explicar`)"
+                )),
+            },
+        },
+        Cmd::Mcp { raiz } => {
+            let raiz = match raiz {
+                Some(r) => r,
+                None => mcp::achar_raiz(&std::env::current_dir().unwrap_or_else(|_| ".".into())),
+            };
+            ok(mcp::servir(&raiz))
+        }
         Cmd::Schema => {
             print!("{}", config::schema());
             Ok(ExitCode::SUCCESS)
@@ -166,32 +235,36 @@ fn main() -> ExitCode {
     }
 }
 
-/// Hooks nunca devolvem exit 2 por erro próprio: só por decisão (bloquear).
-fn rodar_hook(evento: &str) -> ExitCode {
-    match hook::executar(evento) {
-        Ok(hook::Resposta::Liberar) => ExitCode::SUCCESS,
-        Ok(hook::Resposta::LiberarComMensagem(json)) => {
-            println!("{json}");
-            ExitCode::SUCCESS
-        }
-        Ok(hook::Resposta::Bloquear(texto)) => {
-            eprintln!("{texto}");
-            ExitCode::from(2)
-        }
+/// Hooks nunca bloqueiam por erro próprio: só por decisão.
+fn rodar_hook(evento: &str, agente: hook::Agente) -> ExitCode {
+    let saida = match hook::Fase::de_texto(evento) {
         Err(e) => {
-            eprintln!("guarda hook {evento}: {e:#}");
-            ExitCode::from(1)
+            eprintln!("guarda hook: {e:#}");
+            return ExitCode::from(1);
         }
+        Ok(fase) => match hook::executar(agente, fase) {
+            Ok(d) => hook::responder(agente, fase, &d),
+            Err(e) => hook::responder_erro(agente, fase, &format!("guarda hook {evento}: {e:#}")),
+        },
+    };
+    if let Some(o) = saida.stdout {
+        println!("{o}");
     }
+    if let Some(e) = saida.stderr {
+        eprintln!("{e}");
+    }
+    ExitCode::from(saida.codigo)
 }
 
 fn integrar(raiz: &Path, agente: AgenteArg) -> Result<()> {
     let cfg = Config::carregar(raiz)?;
-    let escritos = integracao::integrar(raiz, &cfg, agente.into())?;
-    println!("integrado: {}", escritos.join(", "));
-    if matches!(agente, AgenteArg::Claude) {
-        println!("hooks: proteger (antes de editar), pos-edicao, final (antes de encerrar)");
-        println!("o comando `guarda` precisa estar no PATH do Claude Code");
+    let r = integracao::integrar(raiz, &cfg, agente.into())?;
+    println!("integrado: {}", r.escritos.join(", "));
+    for n in r.notas {
+        println!("- {n}");
+    }
+    if !matches!(agente, AgenteArg::Agents) {
+        println!("- o comando `guarda` precisa estar no PATH do agente");
     }
     Ok(())
 }
@@ -216,6 +289,7 @@ fn check(a: CheckArgs) -> Result<ExitCode> {
     };
     let op = Opcoes {
         sem_baseline: a.sem_baseline,
+        cobertura: a.cobertura,
         atualizar_baseline: a.atualizar_baseline,
     };
     let r = gate::verificar(raiz, &cfg, pedido, &op)?;
@@ -229,6 +303,7 @@ fn check(a: CheckArgs) -> Result<ExitCode> {
                 congeladas: r.congeladas,
                 tempo: r.tempo,
                 falhou,
+                nota: r.nota.clone(),
             };
             print!("{}", saida::compacta(&r.novas, a.max, &resumo));
         }
@@ -243,8 +318,8 @@ fn check(a: CheckArgs) -> Result<ExitCode> {
 
 fn gerar_baseline(raiz: &Path) -> Result<()> {
     let cfg = Config::carregar(raiz)?;
-    let rel = motor::executar(raiz, &cfg, &Escopo::Tudo)?;
-    let b = Baseline::de_violacoes(&rel.violacoes);
+    let c = gate::coletar(raiz, &cfg, Pedido::Tudo, &Opcoes::default())?;
+    let b = Baseline::de_violacoes(&c.congelaveis);
     let caminho = gate::caminho_baseline(raiz, &cfg);
     b.salvar(&caminho)?;
     println!(
@@ -341,7 +416,7 @@ fn linha_arquitetura(rel: &Relatorio) -> String {
     )
 }
 
-fn init(raiz: &Path, forcar: bool, ia: Option<AgenteArg>) -> Result<()> {
+fn init(raiz: &Path, forcar: bool, ia: Vec<AgenteArg>) -> Result<()> {
     let caminho_cfg = raiz.join(config::ARQUIVO);
     if caminho_cfg.exists() && !forcar {
         bail!(
@@ -365,6 +440,13 @@ fn init(raiz: &Path, forcar: bool, ia: Option<AgenteArg>) -> Result<()> {
         ),
     };
     let base = rel.projeto.base.clone().unwrap_or_default();
+    let referencia = referencia_padrao(raiz);
+    let cobertura = match build.cobertura {
+        Some(_) => format!(
+            "\ncobertura:  # Sonar way: 80% do código novo coberto\n  relatorio: auto\n  codigo-novo: {{ referencia: {referencia}, minimo: 80 }}\n"
+        ),
+        None => String::new(),
+    };
     let yml = format!(
         "# yaml-language-server: $schema=./{}\n\
          # gerado por guarda init {} — edite à vontade; só o que difere do padrão precisa estar aqui\n\
@@ -376,6 +458,9 @@ fn init(raiz: &Path, forcar: bool, ia: Option<AgenteArg>) -> Result<()> {
          arquitetura:\n  preset: {preset}  # {comentario}\n  base: {base}\n\
          \n\
          limites:\n  linhas-funcao: 60\n  complexidade-cognitiva: 15\n\
+         {cobertura}\
+         \n\
+         duplicacao:  # Sonar way: no máximo 3% de linhas duplicadas no código novo\n  tokens-minimos: 100\n  codigo-novo-maximo: 3\n\
          \n\
          gate:\n  falhar-em: erro\n  baseline: .guarda/baseline.json\n  supressao: exigir-motivo\n",
         config::ARQUIVO_SCHEMA,
@@ -386,17 +471,22 @@ fn init(raiz: &Path, forcar: bool, ia: Option<AgenteArg>) -> Result<()> {
     integracao::gravar_schema(raiz)?;
 
     // Com o preset e a base fixados, a análise é a mesma que o check vai fazer.
-    let rel = motor::executar(raiz, &cfg, &Escopo::Tudo)?;
-    let b = Baseline::de_violacoes(&rel.violacoes);
+    let coleta = gate::coletar(raiz, &cfg, Pedido::Tudo, &Opcoes::default())?;
+    let rel = coleta.rel;
+    let b = Baseline::de_violacoes(&coleta.congelaveis);
     b.salvar(&gate::caminho_baseline(raiz, &cfg))?;
     let mut escritos = vec![
         "guarda.yml".to_string(),
         cfg.gate.baseline.clone(),
         config::ARQUIVO_SCHEMA.to_string(),
     ];
-    if let Some(agente) = ia {
-        escritos.extend(integracao::integrar(raiz, &cfg, agente.into())?);
+    let mut notas = Vec::new();
+    for agente in ia {
+        let r = integracao::integrar(raiz, &cfg, agente.into())?;
+        escritos.extend(r.escritos);
+        notas.extend(r.notas);
     }
+    escritos.dedup();
 
     let erros_parse = rel.analises.iter().filter(|a| a.erro_parse).count();
     println!(
@@ -411,15 +501,34 @@ fn init(raiz: &Path, forcar: bool, ia: Option<AgenteArg>) -> Result<()> {
     );
     println!("parse: {erros_parse} arquivo(s) com erro (ERR000)");
     match build.cobertura {
-        Some(c) => println!("cobertura: {c} encontrado no build (lido a partir da fase 2)"),
-        None => println!("cobertura: nem JaCoCo nem Kover no build"),
+        Some(c) => println!("cobertura: {c} no build; código novo contra {referencia}"),
+        None => println!("cobertura: nem JaCoCo nem Kover no build (seção cobertura não escrita)"),
     }
     println!(
         "escrito: {} · {}",
         escritos.join(", "),
         saida::segundos(rel.tempo)
     );
+    for n in notas {
+        println!("- {n}");
+    }
     Ok(())
+}
+
+/// A referência do código novo: o branch principal remoto, se existir.
+fn referencia_padrao(raiz: &Path) -> String {
+    let existe = |r: &str| {
+        std::process::Command::new("git")
+            .args(["rev-parse", "--verify", "--quiet", r])
+            .current_dir(raiz)
+            .output()
+            .is_ok_and(|o| o.status.success())
+    };
+    ["origin/main", "origin/master", "main", "master"]
+        .into_iter()
+        .find(|r| existe(r))
+        .unwrap_or("origin/main")
+        .to_string()
 }
 
 fn medir(raiz: &Path) -> Result<()> {
@@ -487,6 +596,30 @@ fn medir(raiz: &Path) -> Result<()> {
             p.camadas_usadas,
             p.com_violacao
         );
+    }
+    let cc_padrao = config::Cobertura::default();
+    let cc = cfg.cobertura.as_ref().unwrap_or(&cc_padrao);
+    match cobertura::carregar(raiz, cc)? {
+        Some(r) => println!(
+            "cobertura: geral {} em {}{}",
+            cobertura::resumo_geral(&r).map_or("-".into(), cobertura::pct),
+            r.caminhos.join(", "),
+            if cfg.cobertura.is_none() {
+                " (seção cobertura ausente: não vale no gate)"
+            } else {
+                ""
+            }
+        ),
+        None => println!("cobertura: nenhum relatório JaCoCo/Kover encontrado"),
+    }
+    match codigo_novo::calcular(raiz, cfg.referencia(), None) {
+        Ok(n) => println!(
+            "código novo: {} linha(s) em {} arquivo(s) contra {}",
+            n.por_arquivo.values().map(|l| l.len()).sum::<usize>(),
+            n.por_arquivo.len(),
+            n.referencia
+        ),
+        Err(e) => println!("código novo: indisponível ({e})"),
     }
     let ok_parse = pct < 1.0;
     let ok_tempo = rel.tempo.as_secs_f64() < 1.0;

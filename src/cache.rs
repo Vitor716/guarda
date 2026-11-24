@@ -67,6 +67,7 @@ pub struct Dados {
     pub supressoes: Vec<Supressao>,
     pub erro_parse: bool,
     pub linhas: usize,
+    pub tokens: Vec<crate::duplicacao::Token>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

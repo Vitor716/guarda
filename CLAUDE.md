@@ -22,8 +22,15 @@ cargo install --path . --locked         # atualiza o `guarda` do PATH (os hooks 
   supressões e ordena.
 - `src/gate.rs`: motor + baseline + gate + GRD001; usado pelo `check` e pelos hooks.
 - `src/baseline.rs`: impressão digital, catraca, comparação.
-- `src/hook.rs`: hooks do Claude Code (proteger, pos-edicao, final).
-- `src/integracao.rs`: `contexto`, bloco no CLAUDE.md/AGENTS.md, merge do settings.json, schema.
+- `src/hook.rs`: hooks (proteger, pos-edicao, final). Cada agente (Claude, Codex,
+  Antigravity) tem só um leitor de evento (`ler_evento`) e uma tabela de resposta
+  (`responder`); a decisão é uma só. Agente novo = esses dois pontos + `integracao.rs`.
+- `src/integracao.rs`: `contexto`, blocos no CLAUDE.md/AGENTS.md, hooks e MCP de cada agente,
+  pre-commit do git, schema.
+- `src/mcp.rs`: servidor MCP por stdio (JSON-RPC escrito à mão; stdout só com protocolo).
+- `src/explicar.rs`: explicação longa de cada regra (todo código de `modelo::REGRAS` precisa de uma).
+- `src/codigo_novo.rs`: linhas novas pelo `git diff -U0` contra o ancestral comum.
+- `src/cobertura.rs`: XML do JaCoCo/Kover, COV000-003. `src/duplicacao.rs`: tokens e Karp-Rabin.
 - `src/config.rs`: `guarda.yml` (serde + schemars). Campo novo exige doc comment (vira a
   descrição no JSON Schema) e muda `impressao_regras` se afetar regra por arquivo.
 - `src/saida.rs`: formato compacto e JSON. `src/main.rs`: CLI (clap).
@@ -38,6 +45,9 @@ cargo install --path . --locked         # atualiza o `guarda` do PATH (os hooks 
   Java e Kotlin nomeiam diferente: `if_statement` × `if_expression`, `catch_clause` ×
   `catch_block`).
 - Toda regra entra com teste; mudança de saída quebra `tests/cli.rs` de propósito.
-- Hook nunca sai com 2 por erro próprio (só por decisão de bloquear): erro interno é exit 1,
-  que o Claude Code trata como não bloqueante.
+- Hook nunca bloqueia por erro próprio (só por decisão): erro interno é exit 1 no Claude e
+  no Codex e a resposta de liberar no Antigravity.
+- Protocolo de agente muda: antes de mexer em `ler_evento`/`responder`, confira a
+  documentação oficial do agente e registre a data no comentário do topo de `hook.rs`.
+- Cada processo git custa dezenas de ms no Windows: rode em paralelo e filtre por arquivo.
 - Textos de mensagem e dica em português, curtos, com a correção na dica.

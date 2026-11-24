@@ -84,21 +84,29 @@ pub fn alterados(raiz: &Path) -> Result<Vec<String>> {
             .filter(|l| !l.is_empty())
             .collect())
     };
-    let mut v = git(&[
-        "-c",
-        "core.quotepath=off",
-        "diff",
-        "--name-only",
-        "--relative",
-        "HEAD",
-    ])?;
-    v.extend(git(&[
-        "-c",
-        "core.quotepath=off",
-        "ls-files",
-        "--others",
-        "--exclude-standard",
-    ])?);
+    // Os dois em paralelo: cada processo git custa dezenas de ms no Windows.
+    let (mudados, novos) = std::thread::scope(|s| {
+        let novos = s.spawn(|| {
+            git(&[
+                "-c",
+                "core.quotepath=off",
+                "ls-files",
+                "--others",
+                "--exclude-standard",
+            ])
+        });
+        let mudados = git(&[
+            "-c",
+            "core.quotepath=off",
+            "diff",
+            "--name-only",
+            "--relative",
+            "HEAD",
+        ]);
+        (mudados, novos.join().expect("thread do git"))
+    });
+    let mut v = mudados?;
+    v.extend(novos?);
     v.sort();
     v.dedup();
     Ok(v)

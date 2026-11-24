@@ -1,9 +1,9 @@
-[package]
+﻿[package]
 name = "guarda"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
-description = "Linter determinístico para Kotlin e Java, com saída enxuta para IA"
+description = "Linter determinÃ­stico para Kotlin e Java, com saÃ­da enxuta para IA"
 publish = false
 
 [profile.release]
@@ -17,6 +17,7 @@ clap = { version = "4.6.9", features = ["derive"] }
 globset = "0.4.22"
 ignore = "0.4.35"
 indexmap = { version = "2.14.2", features = ["serde"] }
+quick-xml = "0.42.0"
 rayon = "1.12.0"
 regex = "1.13.2"
 schemars = { version = "1.2.3", features = ["indexmap2"] }

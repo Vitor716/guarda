@@ -48,10 +48,8 @@ fn init_congela_e_check_cobra_so_o_novo() {
 
     let (codigo, saida) = guarda(p.path(), &["check"]);
     assert_eq!(codigo, 0, "{saida}");
-    assert!(
-        saida.starts_with("✓ guarda 0 erros · baseline 6"),
-        "{saida}"
-    );
+    assert!(saida.starts_with("✓ guarda 0 erros · "), "{saida}");
+    assert!(saida.contains(" · baseline 6 · "), "{saida}");
 
     // Código novo com !! é cobrado; o legado (que mudou de linha) continua congelado.
     let rel = "src/main/kotlin/com/app/application/Calculo.kt";
