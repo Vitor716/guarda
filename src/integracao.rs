@@ -181,7 +181,7 @@ fn ganchos(agente: &Agente) -> Vec<Gancho> {
             ),
             g("Stop", None, "final", 120),
         ],
-        Agente::Agents | Agente::Git => Vec::new(),
+        Agente::Agents | Agente::Git | Agente::Gradle | Agente::Maven => Vec::new(),
     }
 }
 
@@ -292,6 +292,10 @@ pub enum Agente {
     Agents,
     /// Hook de pre-commit do git: barra o commit de qualquer IA ou pessoa.
     Git,
+    /// Tarefa `guardaCheck` ligada ao `check` do Gradle.
+    Gradle,
+    /// Trecho do exec-maven-plugin para o `verify` do Maven (impresso, não escrito).
+    Maven,
 }
 
 pub const PRE_COMMIT: &str = "#!/bin/sh\n# guarda: verificação antes do commit (gerado por `guarda integrar git`)\nexec guarda check --alterados\n";
@@ -373,6 +377,19 @@ pub fn integrar(raiz: &Path, cfg: &Config, agente: Agente) -> Result<Integracao>
         Agente::Agents => {
             escrever_bloco(&raiz.join("AGENTS.md"), &ctx()?)?;
             escritos.push("AGENTS.md".to_string());
+        }
+        Agente::Gradle => {
+            escritos.extend(crate::build::gradle(raiz)?);
+            notas.push(
+                "Gradle: `./gradlew check` agora roda a guarda (só ela: `./gradlew guardaCheck`)"
+                    .into(),
+            );
+        }
+        Agente::Maven => {
+            notas.push(format!(
+                "Maven: cole em <build><plugins> do pom.xml da raiz; `mvn verify` passa a rodar a guarda:\n{}",
+                crate::build::MAVEN.trim_end()
+            ));
         }
         Agente::Git => {
             escritos.push(instalar_pre_commit(raiz)?);

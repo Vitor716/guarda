@@ -4,6 +4,7 @@ pub mod complexidade;
 pub mod estrutura;
 pub mod excecoes;
 pub mod extras;
+pub mod fluxo;
 pub mod java;
 pub mod kotlin;
 pub mod smells;
@@ -33,6 +34,7 @@ pub fn por_arquivo(ctx: &Contexto) -> (Vec<Violacao>, Vec<Supressao>) {
     funcoes_e_classes(ctx, &mut v);
     excecoes::verificar(ctx, &mut v);
     smells::verificar(ctx, &mut v);
+    fluxo::verificar(ctx, &mut v);
     java::verificar(ctx, &mut v);
     extras::verificar(ctx, &mut v);
     if ctx.ling == Linguagem::Kotlin {

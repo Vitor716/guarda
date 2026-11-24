@@ -8,15 +8,24 @@ O problema que resolve: a IA trata skill e baseline como sugestão e foge do pad
 só reprova depois do push. A `guarda` é o portão objetivo que a IA precisa passar antes de
 terminar uma tarefa: mesmo código + mesmo `guarda.yml` + mesma versão = mesmo resultado.
 
-> Status: **Fase 3 entregue (v0.3.0: 46 regras, 5 presets)**, portão da fase passou. A Fase 1
-> ainda está no portão de uma semana de uso real; a Fase 2 aguarda a comparação com o Sonar.
-> Ver [docs/fase-0.md](docs/fase-0.md), [docs/fase-1.md](docs/fase-1.md),
-> [docs/fase-2.md](docs/fase-2.md), [docs/fase-3.md](docs/fase-3.md) e o [roadmap](#roadmap).
+> Status: **Fase 4 em andamento (v0.4.0: 53 regras, 5 presets, Gradle/Maven, releases)**.
+> A Fase 2 aguarda a comparação com o Sonar. Ver [docs/fase-0.md](docs/fase-0.md),
+> [docs/fase-1.md](docs/fase-1.md), [docs/fase-2.md](docs/fase-2.md),
+> [docs/fase-3.md](docs/fase-3.md), [docs/fase-4.md](docs/fase-4.md) e o [roadmap](#roadmap).
 
 ## Instalação
 
+Binário pronto (Windows, Linux, macOS Intel e Apple Silicon) em cada release. O repositório é
+privado, então o download passa pelo `gh` autenticado:
+
 ```bash
-cargo install --path .      # põe `guarda` no PATH (hooks, MCP e pre-commit chamam pelo nome)
+gh release download v0.4.0 -R Vitor716/guarda -p "*x86_64-pc-windows-msvc.zip"
+```
+
+Ou compilado da fonte:
+
+```bash
+cargo install --path . --locked   # põe `guarda` no PATH (hooks, MCP e pre-commit chamam pelo nome)
 ```
 
 ## Uso
@@ -31,9 +40,10 @@ guarda check --cobertura       # roda os testes antes, para a cobertura estar em
 guarda check --formato json    # um objeto JSON por linha (também: sarif, texto, compacto)
 guarda check --atualizar-baseline  # tira o que foi corrigido; nunca acrescenta
 guarda baseline gerar          # regrava o baseline (decisão humana: congela dívida nova)
+guarda baseline aceitar CPX001 src/.../Icms.kt --motivo "..."  # congela só isso, com motivo
 guarda explicar [CODIGO]       # por quê, errado e certo de uma regra (sem código: a lista)
 guarda contexto                # as regras do projeto em ~12 linhas, para o prompt da IA
-guarda integrar <agente>       # claude | codex | antigravity | agents | git
+guarda integrar <alvo>         # claude | codex | antigravity | agents | git | gradle | maven
 guarda mcp                     # servidor MCP por stdio: verificar, explicar, arquitetura
 guarda schema                  # JSON Schema do guarda.yml
 guarda medir [raiz]            # parse, tempo, violações, cobertura e código novo
@@ -50,6 +60,8 @@ A verificação é uma CLI comum; o que muda por agente é só como ela chega at
 | Antigravity (Gemini) | `antigravity` | `AGENTS.md`, `.agents/hooks.json`, `.agents/mcp_config.json` |
 | Cursor, Copilot, outros | `agents` | `AGENTS.md` (e o MCP, se o agente aceitar: `guarda mcp`) |
 | Qualquer um, inclusive sem hook | `git` | pre-commit que roda `guarda check --alterados` |
+| Build (CI e máquina de qualquer um) | `gradle` | `gradle/guarda.gradle.kts` (ou `.gradle`) e a linha `apply` no build da raiz: `./gradlew check` roda a guarda |
+| Build Maven | `maven` | nada: imprime o trecho do exec-maven-plugin para colar no pom; `mvn verify` roda a guarda |
 
 Os hooks leem o evento de cada agente, decidem do mesmo jeito e respondem no protocolo de
 cada um (`guarda hook <fase> --agente claude|codex|antigravity`); a tabela dos protocolos
@@ -117,7 +129,7 @@ sem falso positivo em projeto real. Detalhes em [docs/fase-3.md](docs/fase-3.md)
 | ARQ002 | Ciclo entre fatias (pacotes abaixo da base) | ArchUnit slices | — |
 | ARQ003 | Framework (Spring, JPA, Jackson...) no domínio | Clean Architecture | — |
 | ARQ004 | `@RestController`/`@Controller` fora da camada de entrada | Konsist | — |
-| CPX002 | Complexidade ciclomática | detekt, PMD | > 15 |
+| CPX002 | Complexidade ciclomática | McCabe, NIST SP 500-235 | > 10 |
 | CPX003 | Aninhamento de blocos | detekt NestedBlockDepth | > 4 |
 | CPX004 | Operandos de && e \|\| numa condição | detekt ComplexCondition | > 4 |
 | CPX006 | Classe longa (linhas de código) | detekt LargeClass | > 600 |
@@ -136,6 +148,19 @@ sem falso positivo em projeto real. Detalhes em [docs/fase-3.md](docs/fase-3.md)
 | JV001–JV005 | System.out, recurso sem try-with-resources, equals sem hashCode, Optional como campo/parâmetro, java.util.Date | PMD, Sonar | — |
 | TST001–TST003 | Teste sem asserção, Thread.sleep em teste, teste desativado sem motivo (só em `src/test`) | PMD, Sonar | — |
 | PRB001 / PRB002 | Import e tipo proibidos pelo `regras.proibir` do guarda.yml | política do time | erro |
+
+Fase 4: fluxo de controle, polimorfismo e exceções de negócio. Também entram como **aviso**;
+a medição em 12 projetos está em [docs/fase-4.md](docs/fase-4.md).
+
+| Código | Regra | Origem | Padrão |
+| --- | --- | --- | --- |
+| CND001 | Retorne cedo: if que envolve o resto da função, ou caminho principal no if com a saída no else | Fowler, Replace Nested Conditional with Guard Clauses | corpo ≥ 3 instruções |
+| CND002 | `else` depois de return/throw/break/continue | ESLint no-else-return, Pylint R1705 | — |
+| CND003 | Condição que mistura `&&` e `\|\|` (extraia para uma função com nome) | Fowler, Decompose Conditional | — |
+| POL001 | if/else if testando o tipo da mesma variável (`instanceof`/`is`) | Fowler, Replace Conditional with Polymorphism | ≥ 3 ramos |
+| POL002 | switch/when sobre o mesmo valor em mais de um lugar do arquivo | Fowler, Repeated Switches | ≥ 3 casos |
+| NEG001 | Exceção HTTP (ResponseStatusException, JAX-RS, Ktor) na camada de negócio | Clean Architecture, hexagonal | alvo: erro |
+| NEG002 | `IllegalArgumentException`/`IllegalStateException` como regra de negócio | política da guarda | — |
 
 `guarda explicar <CODIGO>` mostra o porquê e um exemplo errado e certo de cada regra.
 
@@ -160,6 +185,7 @@ arquitetura:
     dominio: ["..domain.."]
   excecoes:
     - adaptadores-saida -> adaptadores-entrada
+  negocio: [dominio, aplicacao, casos-de-uso, servico, modelo]  # onde valem NEG001/NEG002
 limites:
   linhas-funcao: 60
   complexidade-cognitiva: 15
@@ -216,13 +242,15 @@ consulta: |
 - **Arquitetura**: cada preset vira camadas (padrões de pacote no estilo ArchUnit, `..domain..`)
   e arestas permitidas. A camada de um pacote é a do padrão que casa mais perto da raiz. Só
   imports de pacotes do próprio projeto contam (biblioteca nunca gera ARQ001).
-- **Detecção** (`auto`/`init`): cada preset ganha nota pela fração de pacotes de primeiro nível
-  e de arquivos que ele classifica, descontada metade da fração de arquivos com import
-  proibido. Abaixo de 60% a ARQ001 fica desligada até as camadas serem declaradas.
+- **Detecção** (`auto`/`init`): cada preset ganha nota pela fração de pacotes distintos (em
+  qualquer nível) e de arquivos que ele classifica, descontada metade da fração de arquivos
+  com import proibido; nomes típicos do estilo (`port`, `adapter`, `usecase`, `viewmodel`)
+  desempatam. Abaixo de 60% a ARQ001 fica desligada até as camadas serem declaradas.
 - **Baseline**: impressão digital = código + arquivo + símbolo dono + hash do trecho
   normalizado (sem número de linha). Regras de limite (CPX001, CPX005) usam catraca: o valor
   pode cair, nunca subir. `check --atualizar-baseline` só remove; crescer exige
-  `baseline gerar`.
+  `baseline gerar` ou `baseline aceitar --motivo` (o motivo fica gravado na entrada). A IA
+  não roda nenhum dos dois: o hook proteger barra.
 - **Cache**: `.guarda/cache/` guarda o resultado das regras por arquivo, indexado por
   tamanho, data e hash do conteúdo; a chave inclui a versão e os limites, então o cache
   nunca muda o resultado. Também serve de índice do projeto no modo `--arquivos`.
@@ -246,4 +274,4 @@ do tree-sitter são C).
 | 1 · MVP para a IA | JSON Schema, hooks do Claude Code, cache incremental | uma semana com a IA sem falso positivo |
 | 2 · Sonar local | cobertura JaCoCo/Kover de código novo, duplicação | números iguais aos do Sonar (±1 ponto) |
 | 3 · Catálogo completo | ~40 regras, 5 presets, regras YAML, `explicar`, SARIF | init acerta o preset em 3 projetos |
-| 4 · Ecossistema | servidor MCP, releases, wrapper Gradle/Maven | contínuo |
+| 4 · Ecossistema | servidor MCP, releases, Gradle/Maven, regras de fluxo e de negócio | contínuo |

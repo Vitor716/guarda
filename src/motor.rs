@@ -34,6 +34,8 @@ pub struct Analise {
     pub tokens: Vec<Token>,
     /// Anotações das classes (nome, linha), para as regras de arquitetura.
     pub anotacoes: Vec<(String, usize)>,
+    /// Exceções instanciadas, para as regras de negócio (NEG001/002).
+    pub excecoes: Vec<lang::ExcecaoCriada>,
 }
 
 impl Analise {
@@ -52,6 +54,7 @@ impl Analise {
             teste: false,
             tokens: Vec::new(),
             anotacoes: Vec::new(),
+            excecoes: Vec::new(),
         }
     }
 
@@ -65,6 +68,7 @@ impl Analise {
         a.linhas = d.linhas;
         a.tokens = d.tokens.clone();
         a.anotacoes = d.anotacoes.clone();
+        a.excecoes = d.excecoes.clone();
         a.do_cache = true;
         a
     }
@@ -79,6 +83,7 @@ impl Analise {
             linhas: self.linhas,
             tokens: self.tokens.clone(),
             anotacoes: self.anotacoes.clone(),
+            excecoes: self.excecoes.clone(),
         }
     }
 }
@@ -108,6 +113,7 @@ pub fn analisar_fonte(
     a.pacote = lang::pacote(raiz_no, fonte);
     a.imports = lang::imports(raiz_no, fonte);
     a.anotacoes = lang::anotacoes_de_tipo(raiz_no, fonte);
+    a.excecoes = lang::excecoes_criadas(raiz_no, fonte);
 
     if raiz_no.has_error() {
         // Arquivo com erro de sintaxe não é pulado em silêncio: vira ERR000 e as outras
@@ -342,6 +348,7 @@ pub fn executar_com(
             pacote: a.pacote.as_deref(),
             imports: &a.imports,
             anotacoes: &a.anotacoes,
+            excecoes: &a.excecoes,
         })
         .collect();
     let pacotes: HashSet<String> = indice
@@ -390,6 +397,7 @@ pub fn executar_com(
                 pacote: a.pacote.as_deref(),
                 imports: &a.imports,
                 anotacoes: &a.anotacoes,
+                excecoes: &a.excecoes,
             })
             .collect();
         violacoes.extend(arquitetura::verificar(arq, &projeto, &alvos));
@@ -400,6 +408,12 @@ pub fn executar_com(
             &cfg.arquitetura,
         ));
         violacoes.extend(arquitetura::controladores(arq, &projeto, &alvos));
+        violacoes.extend(arquitetura::negocio(
+            arq,
+            &projeto,
+            &alvos,
+            &cfg.arquitetura,
+        ));
     }
     violacoes.extend(sml002);
     violacoes.extend(arq002);

@@ -1,0 +1,71 @@
+name: release
+
+# Publica os binários quando uma tag vX.Y.Z é enviada: git tag v0.4.0 && git push origin v0.4.0
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  binarios:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - alvo: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - alvo: x86_64-pc-windows-msvc
+            os: windows-latest
+          - alvo: aarch64-apple-darwin
+            os: macos-latest
+          - alvo: x86_64-apple-darwin
+            os: macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.alvo }}
+      - name: Compilar
+        run: cargo build --release --locked --target ${{ matrix.alvo }}
+      - name: Empacotar
+        shell: bash
+        run: |
+          nome="guarda-${GITHUB_REF_NAME}-${{ matrix.alvo }}"
+          mkdir -p "dist/$nome"
+          cp README.md "dist/$nome/"
+          if [[ "${{ matrix.alvo }}" == *windows* ]]; then
+            cp "target/${{ matrix.alvo }}/release/guarda.exe" "dist/$nome/"
+            (cd dist && 7z a "$nome.zip" "$nome" > /dev/null)
+            arquivo="dist/$nome.zip"
+          else
+            cp "target/${{ matrix.alvo }}/release/guarda" "dist/$nome/"
+            tar -C dist -czf "dist/$nome.tar.gz" "$nome"
+            arquivo="dist/$nome.tar.gz"
+          fi
+          if command -v sha256sum > /dev/null; then
+            sha256sum "$arquivo" | sed 's| dist/| |' > "$arquivo.sha256"
+          else
+            shasum -a 256 "$arquivo" | sed 's| dist/| |' > "$arquivo.sha256"
+          fi
+          rm -rf "dist/$nome"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: guarda-${{ matrix.alvo }}
+          path: dist/*
+
+  publicar:
+    needs: binarios
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Criar release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes

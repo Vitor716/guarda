@@ -2,6 +2,7 @@
 
 mod arquitetura;
 mod baseline;
+mod build;
 mod cache;
 mod cobertura;
 mod codigo_novo;
@@ -106,6 +107,18 @@ enum BaselineCmd {
         #[arg(default_value = ".")]
         raiz: PathBuf,
     },
+    /// Congela as violações atuais de uma regra num arquivo, com motivo (decisão humana)
+    Aceitar {
+        /// Código da regra (ex.: CPX001)
+        codigo: String,
+        /// Arquivo, relativo à raiz
+        arquivo: PathBuf,
+        /// Por que a dívida é aceita (fica gravado no baseline)
+        #[arg(long)]
+        motivo: String,
+        #[arg(long, default_value = ".")]
+        raiz: PathBuf,
+    },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -120,6 +133,10 @@ enum AgenteArg {
     Agents,
     /// Hook de pre-commit: barra o commit de qualquer IA ou pessoa
     Git,
+    /// Gradle: tarefa guardaCheck ligada ao `check`
+    Gradle,
+    /// Maven: imprime o trecho do exec-maven-plugin para o `verify`
+    Maven,
 }
 
 impl From<AgenteArg> for integracao::Agente {
@@ -130,6 +147,8 @@ impl From<AgenteArg> for integracao::Agente {
             AgenteArg::Antigravity => Self::Antigravity,
             AgenteArg::Agents => Self::Agents,
             AgenteArg::Git => Self::Git,
+            AgenteArg::Gradle => Self::Gradle,
+            AgenteArg::Maven => Self::Maven,
         }
     }
 }
@@ -199,6 +218,15 @@ fn main() -> ExitCode {
         Cmd::Baseline {
             acao: BaselineCmd::Gerar { raiz },
         } => ok(gerar_baseline(&raiz)),
+        Cmd::Baseline {
+            acao:
+                BaselineCmd::Aceitar {
+                    codigo,
+                    arquivo,
+                    motivo,
+                    raiz,
+                },
+        } => ok(aceitar_no_baseline(&raiz, &codigo, &arquivo, &motivo)),
         Cmd::Medir { raiz } => ok(medir(&raiz)),
         Cmd::Contexto { raiz } => ok(Config::carregar(&raiz)
             .and_then(|cfg| integracao::contexto(&raiz, &cfg))
@@ -266,12 +294,20 @@ fn rodar_hook(evento: &str, agente: hook::Agente) -> ExitCode {
 fn integrar(raiz: &Path, agente: AgenteArg) -> Result<()> {
     let cfg = Config::carregar(raiz)?;
     let r = integracao::integrar(raiz, &cfg, agente.into())?;
-    println!("integrado: {}", r.escritos.join(", "));
+    if !r.escritos.is_empty() {
+        println!("integrado: {}", r.escritos.join(", "));
+    }
     for n in r.notas {
         println!("- {n}");
     }
-    if !matches!(agente, AgenteArg::Agents) {
-        println!("- o comando `guarda` precisa estar no PATH do agente");
+    match agente {
+        AgenteArg::Agents => {}
+        AgenteArg::Gradle | AgenteArg::Maven => {
+            println!(
+                "- o comando `guarda` precisa estar no PATH de quem roda o build (Gradle também aceita GUARDA_BIN ou -Pguarda.bin)"
+            )
+        }
+        _ => println!("- o comando `guarda` precisa estar no PATH do agente"),
     }
     Ok(())
 }
@@ -342,6 +378,45 @@ fn gerar_baseline(raiz: &Path) -> Result<()> {
         b.violacoes.len(),
         b.regras(),
         cfg.gate.baseline
+    );
+    Ok(())
+}
+
+fn aceitar_no_baseline(raiz: &Path, codigo: &str, arquivo: &Path, motivo: &str) -> Result<()> {
+    let motivo = motivo.trim();
+    if motivo.chars().count() < 10 {
+        anyhow::bail!("--motivo precisa explicar a decisão (10 caracteres ou mais)");
+    }
+    let codigo = codigo.trim().to_uppercase();
+    if modelo::regra(&codigo).is_none() {
+        anyhow::bail!("regra desconhecida: {codigo} (veja `guarda explicar`)");
+    }
+    let base = std::path::absolute(raiz)?;
+    let abs = std::path::absolute(raiz.join(arquivo))
+        .ok()
+        .filter(|p| p.exists())
+        .map_or_else(|| std::path::absolute(arquivo), Ok)?;
+    let rel = descoberta::relativo(&base, &abs)
+        .with_context(|| format!("{} está fora de {}", arquivo.display(), raiz.display()))?;
+    let cfg = Config::carregar(raiz)?;
+    let c = gate::coletar(
+        raiz,
+        &cfg,
+        Pedido::Arquivos(vec![rel.clone()]),
+        &Opcoes::default(),
+    )?;
+    let alvo: Vec<_> = c
+        .congelaveis
+        .into_iter()
+        .filter(|v| v.codigo == codigo && v.arquivo == rel)
+        .collect();
+    let caminho = gate::caminho_baseline(raiz, &cfg);
+    let mut b = Baseline::carregar(&caminho)?.unwrap_or_default();
+    let novas = b.aceitar(&alvo, motivo);
+    b.salvar(&caminho)?;
+    println!(
+        "baseline: {novas} violação(ões) de {codigo} em {rel} aceita(s); {} já estava(m) congelada(s)",
+        alvo.len() - novas
     );
     Ok(())
 }

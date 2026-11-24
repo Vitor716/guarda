@@ -543,6 +543,8 @@ pub struct ArquivoIndice<'a> {
     pub imports: &'a [Import],
     /// Anotações das classes do arquivo (nome, linha).
     pub anotacoes: &'a [(String, usize)],
+    /// Exceções instanciadas no arquivo.
+    pub excecoes: &'a [crate::lang::ExcecaoCriada],
 }
 
 /// ARQ001: import de um pacote do projeto que pertence a uma camada proibida.
@@ -681,6 +683,74 @@ pub fn controladores(
                 nome_do_arquivo(a.arquivo),
                 nome,
                 None,
+            ));
+        }
+    }
+    v
+}
+
+/// Pacotes de exceções HTTP: o tipo criado é resolvido pelo import explícito.
+const HTTP_PACOTES: &[&str] = &[
+    "org.springframework.web",
+    "org.springframework.http",
+    "jakarta.ws.rs",
+    "javax.ws.rs",
+    "io.ktor",
+    "io.micronaut.http",
+];
+/// Nomes que só existem como exceção HTTP (Spring, JAX-RS): valem mesmo sem import.
+const HTTP_EXCLUSIVAS: &[&str] = &[
+    "ErrorResponseException",
+    "HttpClientErrorException",
+    "HttpServerErrorException",
+    "HttpStatusCodeException",
+    "ResponseStatusException",
+    "WebApplicationException",
+];
+/// Exceções genéricas que escondem uma regra de negócio (as de SML006 já são cobradas lá).
+const GENERICAS_DE_NEGOCIO: &[&str] = &["IllegalArgumentException", "IllegalStateException"];
+
+fn excecao_http(tipo: &str, imports: &[Import]) -> bool {
+    HTTP_EXCLUSIVAS.contains(&tipo)
+        || imports
+            .iter()
+            .any(|i| i.nome == tipo && HTTP_PACOTES.iter().any(|p| comeca_com(&i.pacote, p)))
+}
+
+/// NEG001: exceção HTTP criada numa camada de negócio; NEG002: IllegalArgument/IllegalState
+/// criada lá (regra de negócio sem nome).
+pub fn negocio(
+    arq: &Arquitetura,
+    projeto: &Projeto,
+    arquivos: &[ArquivoIndice],
+    cfg: &config::Arquitetura,
+) -> Vec<Violacao> {
+    let mut v = Vec::new();
+    for a in arquivos {
+        let Some(camada) = a.pacote.and_then(|p| arq.camada_de(p, projeto)) else {
+            continue;
+        };
+        if !cfg.negocio.iter().any(|c| c == camada) {
+            continue;
+        }
+        for e in a.excecoes {
+            let (codigo, mensagem, dica) = if excecao_http(&e.tipo, a.imports) {
+                (
+                    "NEG001",
+                    format!("{} em {camada}", e.tipo),
+                    "lance uma exceção de domínio e traduza para HTTP na camada de entrada",
+                )
+            } else if GENERICAS_DE_NEGOCIO.contains(&e.tipo.as_str()) {
+                (
+                    "NEG002",
+                    format!("{} genérica em {camada}", e.tipo),
+                    "crie uma exceção com o nome da regra (ex.: SaldoInsuficiente)",
+                )
+            } else {
+                continue;
+            };
+            v.push(Violacao::nova(
+                codigo, a.arquivo, e.linha, mensagem, dica, &e.simbolo, &e.trecho, None,
             ));
         }
     }
@@ -945,18 +1015,21 @@ mod testes {
                 pacote: Some("com.app.domain"),
                 imports: &dom,
                 anotacoes: &[],
+                excecoes: &[],
             },
             ArquivoIndice {
                 arquivo: "I.java",
                 pacote: Some("com.app.infra.db"),
                 imports: &infra,
                 anotacoes: &[],
+                excecoes: &[],
             },
             ArquivoIndice {
                 arquivo: "C.java",
                 pacote: Some("com.app.application"),
                 imports: &app,
                 anotacoes: &anot_ctrl,
+                excecoes: &[],
             },
         ];
         let cfg = config::Arquitetura::default();
@@ -1012,6 +1085,7 @@ mod testes {
             pacote: Some("com.app.feature.login"),
             imports: &imports,
             anotacoes: &[],
+            excecoes: &[],
         }];
         let v = verificar(&arq, &p, &arquivos);
         assert_eq!(v.len(), 1);
@@ -1034,6 +1108,7 @@ mod testes {
             pacote: Some("com.app.viewmodel"),
             imports: &imports,
             anotacoes: &[],
+            excecoes: &[],
         }];
         let cfg = config::Arquitetura::default();
         let v = framework(&arq, &p, &arquivos, &cfg);
@@ -1104,6 +1179,7 @@ mod testes {
             pacote: Some("com.app.domain"),
             imports: &imports,
             anotacoes: &[],
+            excecoes: &[],
         }];
         let v = verificar(&arq, &p, &arquivos);
         assert_eq!(v.len(), 1);

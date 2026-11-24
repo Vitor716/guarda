@@ -285,6 +285,47 @@ pub fn anotacoes_de_tipo(raiz: Node, fonte: &str) -> Vec<(String, usize)> {
     v
 }
 
+/// Exceção instanciada no arquivo (`new XException(..)`, `XException(..)` no Kotlin), lançada
+/// ou não (ex.: `orElseThrow(() -> new X())`). Usada pelas regras de negócio (NEG001/002).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ExcecaoCriada {
+    /// Nome simples do tipo.
+    pub tipo: String,
+    pub linha: usize,
+    pub simbolo: String,
+    pub trecho: String,
+}
+
+pub fn excecoes_criadas(raiz: Node, fonte: &str) -> Vec<ExcecaoCriada> {
+    let mut v = Vec::new();
+    visitar(raiz, |n| {
+        let tipo = match n.kind() {
+            "object_creation_expression" => n.child_by_field_name("type").map(|t| texto(t, fonte)),
+            "call_expression" => n
+                .named_child(0)
+                .filter(|c| c.kind() == "identifier")
+                .map(|c| texto(c, fonte)),
+            _ => None,
+        };
+        let Some(tipo) = tipo else { return };
+        let tipo = tipo.split('<').next().unwrap_or(tipo).trim();
+        let tipo = tipo.rsplit('.').next().unwrap_or(tipo);
+        if !tipo.ends_with("Exception") || !tipo.starts_with(|c: char| c.is_ascii_uppercase()) {
+            return;
+        }
+        v.push(ExcecaoCriada {
+            tipo: tipo.to_string(),
+            linha: linha(n),
+            simbolo: simbolo_dono(n, fonte),
+            trecho: texto(n, fonte)
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" "),
+        });
+    });
+    v
+}
+
 /// Para cada linha (índice 0-based), diz se ela tem código, ou seja, se não é em branco
 /// nem só comentário. Usada na contagem de linhas de função (CPX005).
 pub fn linhas_de_codigo(fonte: &str, raiz: Node) -> Vec<bool> {

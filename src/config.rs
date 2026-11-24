@@ -172,6 +172,8 @@ pub struct Arquitetura {
     pub sem_framework: Vec<String>,
     /// ARQ003: prefixos de pacote considerados framework.
     pub frameworks: Vec<String>,
+    /// NEG001/NEG002: camadas onde moram as regras de negócio.
+    pub negocio: Vec<String>,
 }
 
 impl Default for Arquitetura {
@@ -199,6 +201,10 @@ impl Default for Arquitetura {
             .iter()
             .map(|s| s.to_string())
             .collect(),
+            negocio: ["dominio", "aplicacao", "casos-de-uso", "servico", "modelo"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
         }
     }
 }
@@ -247,7 +253,7 @@ impl Limites {
             Perfil::Rigoroso => Self {
                 linhas_funcao: 30,
                 complexidade_cognitiva: 10,
-                complexidade_ciclomatica: 10,
+                complexidade_ciclomatica: 7,
                 aninhamento: 3,
                 condicao_operadores: 3,
                 linhas_classe: 400,
@@ -265,7 +271,7 @@ impl Default for Limites {
         Self {
             linhas_funcao: 60,
             complexidade_cognitiva: 15,
-            complexidade_ciclomatica: 15,
+            complexidade_ciclomatica: 10,
             aninhamento: 4,
             condicao_operadores: 4,
             linhas_classe: 600,

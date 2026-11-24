@@ -69,6 +69,8 @@ pub struct Dados {
     pub linhas: usize,
     pub tokens: Vec<crate::duplicacao::Token>,
     pub anotacoes: Vec<(String, usize)>,
+    #[serde(default)]
+    pub excecoes: Vec<crate::lang::ExcecaoCriada>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

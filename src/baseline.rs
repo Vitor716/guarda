@@ -20,6 +20,9 @@ pub struct Entrada {
     pub hash: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub valor: Option<u32>,
+    /// Por que a dívida foi aceita (`guarda baseline aceitar --motivo`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub motivo: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -47,6 +50,7 @@ pub fn entrada(v: &Violacao) -> Entrada {
         simbolo: v.simbolo.clone(),
         hash: h.to_hex()[..16].to_string(),
         valor: v.valor.filter(|_| catraca(v.codigo)),
+        motivo: None,
     }
 }
 
@@ -86,6 +90,33 @@ impl Baseline {
         Ok(())
     }
 
+    /// Acrescenta as violações que ainda não estão congeladas, com o motivo. Devolve quantas.
+    pub fn aceitar(&mut self, vs: &[Violacao], motivo: &str) -> usize {
+        if self.versao == 0 {
+            self.versao = 1;
+        }
+        let mut existentes: BTreeMap<Chave, usize> = BTreeMap::new();
+        for e in &self.violacoes {
+            *existentes.entry(chave(e)).or_default() += 1;
+        }
+        let mut novas = 0;
+        for v in vs {
+            let e = entrada(v);
+            match existentes.get_mut(&chave(&e)) {
+                Some(n) if *n > 0 => *n -= 1,
+                _ => {
+                    self.violacoes.push(Entrada {
+                        motivo: Some(motivo.to_string()),
+                        ..e
+                    });
+                    novas += 1;
+                }
+            }
+        }
+        self.violacoes.sort();
+        novas
+    }
+
     pub fn regras(&self) -> usize {
         self.violacoes
             .iter()
@@ -105,6 +136,8 @@ pub struct Comparacao {
 }
 
 type Chave = (String, String, String, String);
+/// O que a comparação reaproveita de uma entrada congelada: valor da catraca e motivo.
+type Congelada = (Option<u32>, Option<String>);
 
 fn chave(e: &Entrada) -> Chave {
     (
@@ -118,9 +151,12 @@ fn chave(e: &Entrada) -> Chave {
 /// Compara as violações atuais com o baseline. `analisados` limita a conta de corrigidas
 /// aos arquivos que de fato foram verificados (modo `--arquivos`).
 pub fn comparar(b: &Baseline, atuais: Vec<Violacao>, analisados: &HashSet<&str>) -> Comparacao {
-    let mut disponiveis: BTreeMap<Chave, Vec<Option<u32>>> = BTreeMap::new();
+    let mut disponiveis: BTreeMap<Chave, Vec<Congelada>> = BTreeMap::new();
     for e in &b.violacoes {
-        disponiveis.entry(chave(e)).or_default().push(e.valor);
+        disponiveis
+            .entry(chave(e))
+            .or_default()
+            .push((e.valor, e.motivo.clone()));
     }
     let mut novas = Vec::new();
     let mut mantidas = Vec::new();
@@ -129,19 +165,20 @@ pub fn comparar(b: &Baseline, atuais: Vec<Violacao>, analisados: &HashSet<&str>)
         let e = entrada(&v);
         let fila = disponiveis.get_mut(&chave(&e));
         match fila.and_then(|f| f.pop()) {
-            Some(valor_antigo) => match (valor_antigo, e.valor) {
+            Some((valor_antigo, motivo)) => match (valor_antigo, e.valor) {
                 (Some(antigo), Some(atual)) if atual > antigo => {
                     v.mensagem = format!("{} (baseline {antigo})", v.mensagem);
                     novas.push(v);
                     // A entrada antiga continua valendo até a função voltar ao limite antigo.
                     mantidas.push(Entrada {
                         valor: Some(antigo),
+                        motivo,
                         ..e
                     });
                 }
                 _ => {
                     congeladas += 1;
-                    mantidas.push(e);
+                    mantidas.push(Entrada { motivo, ..e });
                 }
             },
             None => novas.push(v),

@@ -1,6 +1,6 @@
 [package]
 name = "guarda"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Linter determinÃ­stico para Kotlin e Java, com saÃ­da enxuta para IA"

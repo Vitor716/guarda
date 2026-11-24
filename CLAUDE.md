@@ -21,9 +21,13 @@ cargo install --path . --locked         # atualiza o `guarda` do PATH (os hooks 
   004/005), `kotlin.rs` (KT001-007), `supressao.rs` (SUP001 e `guarda:ignorar`), `testes.rs`
   (TST001-003, só para arquivos de `fontes.testes`), `extras.rs` (PRB001/002 e regras
   personalizadas por consulta do tree-sitter, carregadas uma vez por execução).
+- `src/regras/fluxo.rs`: CND001-003 (guard clause, else depois de return, condição mista) e
+  POL001/002 (cadeia de instanceof/is, switch repetido).
 - `src/arquitetura.rs`: padrões ArchUnit, presets (o `modular` é montado dos pacotes do
   projeto: `preset_do_projeto`), detecção (`pontuar`: pacotes distintos + arquivos − violações
-  + marcas do estilo), ARQ001, ARQ002 (ciclos entre fatias), ARQ003 (framework) e ARQ004.
+  + marcas do estilo), ARQ001, ARQ002 (ciclos entre fatias), ARQ003 (framework), ARQ004 e
+  NEG001/002 (exceções criadas na camada de negócio; precisam da camada, por isso moram aqui,
+  sobre `lang::excecoes_criadas` guardado no cache).
 - `src/config.rs`: também `estende` (mescla de YAML) e `perfil`; use `cfg.desligada()` e
   `cfg.severidade()` em vez de ler `regras.desligar`/`regras.severidade` direto.
 - `src/motor.rs`: varre, analisa em paralelo (ou tira do `cache.rs`), monta o índice, aplica
@@ -41,7 +45,10 @@ cargo install --path . --locked         # atualiza o `guarda` do PATH (os hooks 
 - `src/cobertura.rs`: XML do JaCoCo/Kover, COV000-003. `src/duplicacao.rs`: tokens e Karp-Rabin.
 - `src/config.rs`: `guarda.yml` (serde + schemars). Campo novo exige doc comment (vira a
   descrição no JSON Schema) e muda `impressao_regras` se afetar regra por arquivo.
-- `src/saida.rs`: formato compacto e JSON. `src/main.rs`: CLI (clap).
+- `src/build.rs`: `integrar gradle` (script aplicado no build da raiz) e o trecho do Maven.
+- `src/saida.rs`: formato compacto, JSON, SARIF e texto. `src/main.rs`: CLI (clap).
+- `.github/workflows/`: `ci.yml` (fmt, clippy, testes em Linux e Windows) e `release.yml`
+  (binários de 4 alvos ao empurrar uma tag `v*`).
 
 ## Regras do projeto
 
@@ -56,8 +63,9 @@ cargo install --path . --locked         # atualiza o `guarda` do PATH (os hooks 
 - Regra nova entra como aviso (`severidade: Aviso`, `alvo` = a severidade final) e precisa de
   uma explicação em `explicar.rs`. Antes de promover a erro, meça num projeto real e revise
   amostras de cada achado (`docs/fase-N.md` registra a revisão).
-- Não reinstale o binário (`cargo install`) enquanto houver semana de teste em projeto real:
-  os hooks de lá usam o `guarda` do PATH. Teste com `target/release/guarda.exe`.
+- Binário do PATH: `cargo install --path . --locked` só com o trabalho testado; os hooks dos
+  projetos reais usam ele. Durante o desenvolvimento, teste com `target/release/guarda.exe`.
+- Medição em projeto real: sempre em cópia dos fontes (scratchpad), nunca no original.
 - Hook nunca bloqueia por erro próprio (só por decisão): erro interno é exit 1 no Claude e
   no Codex e a resposta de liberar no Antigravity.
 - Protocolo de agente muda: antes de mexer em `ler_evento`/`responder`, confira a
