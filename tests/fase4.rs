@@ -144,3 +144,110 @@ fn integrar_maven_imprime_o_plugin() {
     assert!(s.contains("<phase>verify</phase>"), "{s}");
     assert!(!p.path().join("pom.xml").exists());
 }
+
+#[test]
+fn baseline_status_regerar_parcial_e_recurso_corrigido() {
+    let p = projeto();
+    let r = p.path();
+    std::fs::create_dir_all(r.join("src/main/resources")).unwrap();
+    let props = r.join("src/main/resources/application.properties");
+    std::fs::write(&props, "spring.datasource.password=root1234\n").unwrap();
+
+    let (c, s) = guarda(r, &["init"]);
+    assert_eq!(c, 0, "{s}");
+
+    // Aceita KT001 em Calculo.kt só na linha 7 (teste de --linha e preservação de motivo).
+    let calc = "src/main/kotlin/com/app/application/Calculo.kt";
+    let (c, _) = guarda(
+        r,
+        &[
+            "baseline",
+            "aceitar",
+            "KT001",
+            calc,
+            "--linha",
+            "7",
+            "--motivo",
+            "decisão registrada para auditoria",
+        ],
+    );
+    assert_eq!(c, 0);
+
+    // Corrige o segredo em application.properties: deve aparecer em `baseline status` e sair no `--atualizar-baseline`.
+    std::fs::write(&props, "spring.datasource.password=${DB_PASS}\n").unwrap();
+    let (c, st) = guarda(r, &["baseline", "status"]);
+    assert_eq!(c, 0, "{st}");
+    assert!(st.contains("corrigidas (podem sair): 1"), "{st}");
+
+    let (c, _) = guarda(r, &["check", "--atualizar-baseline"]);
+    assert_eq!(c, 0);
+    let bl = std::fs::read_to_string(r.join(".guarda/baseline.json")).unwrap();
+    assert!(
+        !bl.contains("SEC001"),
+        "recurso corrigido sai do baseline: {bl}"
+    );
+
+    // Deleta um arquivo legado com violação e verifica se sai no `--atualizar-baseline`.
+    std::fs::remove_file(r.join("src/main/java/com/app/domain/Quebrado.java")).unwrap();
+    let (c, st) = guarda(r, &["baseline", "status"]);
+    assert_eq!(c, 0, "{st}");
+    assert!(st.contains("1 em arquivos removidos"), "{st}");
+    let (c, _) = guarda(r, &["check", "--atualizar-baseline"]);
+    assert_eq!(c, 0);
+    let bl = std::fs::read_to_string(r.join(".guarda/baseline.json")).unwrap();
+    assert!(!bl.contains("Quebrado.java"), "{bl}");
+
+    // `baseline gerar --regras SEC001` não congela um KT001 novo adicionado no código.
+    std::fs::write(&props, "spring.datasource.password=novaSenha99\n").unwrap();
+    let calc_path = r.join(calc);
+    let sujo = std::fs::read_to_string(&calc_path)
+        .unwrap()
+        .replace("val a = n!!", "val z = n!!.cru()\n        val a = n!!");
+    std::fs::write(&calc_path, sujo).unwrap();
+    let (c, out) = guarda(r, &["baseline", "gerar", "--regras", "SEC001"]);
+    assert_eq!(c, 0, "{out}");
+    assert!(out.contains("+1 novas"), "{out}");
+
+    // O KT001 novo continua sendo cobrado, enquanto SEC001 foi congelado.
+    let (c, out) = guarda(r, &["check", "--formato", "compacto"]);
+    assert_eq!(c, 1, "{out}");
+    assert!(out.contains("KT001"), "{out}");
+    assert!(!out.contains("SEC001"), "{out}");
+}
+
+#[test]
+fn novas_regras_spr006_bug009_e_tst004() {
+    let p = projeto();
+    let r = p.path();
+    std::fs::create_dir_all(r.join("src/main/java/com/app/endpoint")).unwrap();
+    std::fs::write(
+        r.join("src/main/java/com/app/endpoint/PedidoController.java"),
+        "package com.app.endpoint;\n@RestController\nclass PedidoController {\n    @Transactional\n    void criar(String s) { assert s != null; }\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        r.join("src/test/java/com/app/TautologiaTest.java"),
+        "package com.app;\nclass TautologiaTest {\n    @Test void ok() { assertTrue(true); }\n}\n",
+    )
+    .unwrap();
+    let (_, s) = guarda(
+        r,
+        &[
+            "check",
+            "--sem-baseline",
+            "--max",
+            "100",
+            "--formato",
+            "compacto",
+        ],
+    );
+    assert!(
+        s.contains("SPR006 @Transactional em controlador HTTP"),
+        "{s}"
+    );
+    assert!(s.contains("BUG009 assert em código de produção"), "{s}");
+    assert!(
+        s.contains("TST004 assertTrue(true) é sempre verdadeiro"),
+        "{s}"
+    );
+}

@@ -112,6 +112,26 @@ fn yaml(t: &str) -> Vec<(String, String, usize)> {
     v
 }
 
+/// Endpoints do Actuator que expõem segredos, memória ou controle da JVM.
+fn actuator_sensivel(valor: &str) -> bool {
+    const SENSIVEIS: &[&str] = &[
+        "env",
+        "heapdump",
+        "shutdown",
+        "configprops",
+        "beans",
+        "mappings",
+        "threaddump",
+        "logfile",
+        "httptrace",
+        "httpexchanges",
+    ];
+    valor
+        .split([',', ' ', '[', ']', '"', '\''])
+        .map(str::trim)
+        .any(|ep| SENSIVEIS.contains(&ep))
+}
+
 fn violacao(
     codigo: &'static str,
     rel: &str,
@@ -173,12 +193,26 @@ fn configuracao(rel: &str, texto: &str, v: &mut Vec<Violacao>) {
             "management.endpoints.web.exposure.include" if l.contains('*') => {
                 Some("todos os endpoints do actuator expostos")
             }
+            "management.endpoints.web.exposure.include" if actuator_sensivel(&l) => {
+                Some("endpoint sensível do actuator exposto")
+            }
+            "management.endpoint.health.show-details" if l == "always" => {
+                Some("detalhes do health expostos para qualquer cliente")
+            }
+            "spring.h2.console.enabled" if l == "true" => {
+                Some("console do H2 habilitado fora de perfil local")
+            }
             "spring.h2.console.settings.web-allow-others" if l == "true" => {
                 Some("console do H2 aberto para a rede")
             }
             "debug" if l == "true" => Some("modo debug ligado"),
-            "server.error.include-stacktrace" if l == "always" => {
+            "server.error.include-stacktrace"
+                if matches!(l.as_str(), "always" | "on_param" | "on-param") =>
+            {
                 Some("stack trace na resposta de erro")
+            }
+            "server.error.include-exception" if l == "true" => {
+                Some("classe da exceção exposta na resposta de erro")
             }
             "management.endpoint.env.show-values"
             | "management.endpoint.configprops.show-values"
@@ -272,6 +306,21 @@ mod casos {
         // No perfil de desenvolvimento, debug ligado é o esperado.
         let v = achar("src/main/resources/application-dev.yml", "debug: true\n");
         assert!(v.is_empty(), "{v:?}");
+
+        // Novos cenários de SEC017 (on_param, health.show-details, actuator sensível, H2, include-exception).
+        let y2 = "server:\n  error:\n    include-stacktrace: on_param\n    include-exception: true\nmanagement:\n  endpoints:\n    web:\n      exposure:\n        include: health,info,env\n  endpoint:\n    health:\n      show-details: always\nspring:\n  h2:\n    console:\n      enabled: true\n";
+        let v = achar("src/main/resources/application.yml", y2);
+        assert_eq!(
+            v.iter().map(|x| (x.0.as_str(), x.1)).collect::<Vec<_>>(),
+            [
+                ("SEC017", 3),
+                ("SEC017", 4),
+                ("SEC017", 9),
+                ("SEC017", 12),
+                ("SEC017", 16),
+            ],
+            "{v:?}"
+        );
     }
 
     #[test]

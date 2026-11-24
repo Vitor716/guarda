@@ -103,12 +103,15 @@ enum Cmd {
 
 #[derive(Subcommand)]
 enum BaselineCmd {
-    /// Regrava o baseline com todas as violações atuais (decisão humana: congela dívida nova)
+    /// Regrava o baseline com as violações atuais, preservando os motivos já aceitos
     Gerar {
         #[arg(default_value = ".")]
         raiz: PathBuf,
+        /// Atualiza só estas regras (ex.: --regras SEC001 SPR006), sem tocar nas demais
+        #[arg(long, num_args = 1..)]
+        regras: Vec<String>,
     },
-    /// Congela as violações atuais de uma regra num arquivo, com motivo (decisão humana)
+    /// Congela violações atuais de uma regra num arquivo (ou sobe catraca), com motivo
     Aceitar {
         /// Código da regra (ex.: CPX001)
         codigo: String,
@@ -117,7 +120,18 @@ enum BaselineCmd {
         /// Por que a dívida é aceita (fica gravado no baseline)
         #[arg(long)]
         motivo: String,
+        /// Aceita só a(s) violação(ões) desta linha
+        #[arg(long)]
+        linha: Option<usize>,
+        /// Aceita só a(s) violação(ões) deste símbolo (ex.: Classe.metodo)
+        #[arg(long)]
+        simbolo: Option<String>,
         #[arg(long, default_value = ".")]
+        raiz: PathBuf,
+    },
+    /// Mostra a saúde do baseline: entradas por regra, motivos, corrigidas e catracas
+    Status {
+        #[arg(default_value = ".")]
         raiz: PathBuf,
     },
 }
@@ -217,17 +231,29 @@ fn main() -> ExitCode {
         Cmd::Check(a) => check(a),
         Cmd::Init { raiz, forcar, ia } => ok(init(&raiz, forcar, ia)),
         Cmd::Baseline {
-            acao: BaselineCmd::Gerar { raiz },
-        } => ok(gerar_baseline(&raiz)),
+            acao: BaselineCmd::Gerar { raiz, regras },
+        } => ok(gerar_baseline(&raiz, &regras)),
         Cmd::Baseline {
             acao:
                 BaselineCmd::Aceitar {
                     codigo,
                     arquivo,
                     motivo,
+                    linha,
+                    simbolo,
                     raiz,
                 },
-        } => ok(aceitar_no_baseline(&raiz, &codigo, &arquivo, &motivo)),
+        } => ok(aceitar_no_baseline(
+            &raiz,
+            &codigo,
+            &arquivo,
+            &motivo,
+            linha,
+            simbolo.as_deref(),
+        )),
+        Cmd::Baseline {
+            acao: BaselineCmd::Status { raiz },
+        } => ok(status_baseline(&raiz)),
         Cmd::Medir { raiz } => ok(medir(&raiz)),
         Cmd::Contexto { raiz } => ok(Config::carregar(&raiz)
             .and_then(|cfg| integracao::contexto(&raiz, &cfg))
@@ -337,8 +363,15 @@ fn check(a: CheckArgs) -> Result<ExitCode> {
         atualizar_baseline: a.atualizar_baseline,
     };
     let r = gate::verificar(raiz, &cfg, pedido, &op)?;
-    if a.atualizar_baseline && r.corrigidas > 0 {
-        eprintln!("baseline: {} corrigida(s) removida(s)", r.corrigidas);
+    if a.atualizar_baseline && (r.corrigidas > 0 || r.catracas_apertadas > 0) {
+        let mut partes = Vec::new();
+        if r.corrigidas > 0 {
+            partes.push(format!("{} corrigida(s) removida(s)", r.corrigidas));
+        }
+        if r.catracas_apertadas > 0 {
+            partes.push(format!("{} catraca(s) apertada(s)", r.catracas_apertadas));
+        }
+        eprintln!("baseline: {}", partes.join(", "));
     }
     let falhou = r.falhou;
     let formato = a.formato.unwrap_or_else(|| {
@@ -368,22 +401,77 @@ fn check(a: CheckArgs) -> Result<ExitCode> {
     })
 }
 
-fn gerar_baseline(raiz: &Path) -> Result<()> {
+fn gerar_baseline(raiz: &Path, regras: &[String]) -> Result<()> {
     let cfg = Config::carregar(raiz)?;
+    let filtro: Option<Vec<String>> = if regras.is_empty() {
+        None
+    } else {
+        let mut cods = Vec::new();
+        for r in regras {
+            let c = r.trim().to_uppercase();
+            if modelo::regra(&c).is_none() {
+                bail!("regra desconhecida: {c} (veja `guarda explicar`)");
+            }
+            cods.push(c);
+        }
+        Some(cods)
+    };
     let c = gate::coletar(raiz, &cfg, Pedido::Tudo, &Opcoes::default())?;
-    let b = Baseline::de_violacoes(&c.congelaveis);
     let caminho = gate::caminho_baseline(raiz, &cfg);
+    let anterior = Baseline::carregar(&caminho)?;
+    let (b, delta) = match &anterior {
+        Some(ant) => ant.regerar(&c.congelaveis, filtro.as_deref()),
+        None => {
+            let alvo: Vec<_> = match &filtro {
+                Some(fs) => c
+                    .congelaveis
+                    .into_iter()
+                    .filter(|v| fs.iter().any(|f| f == v.codigo))
+                    .collect(),
+                None => c.congelaveis,
+            };
+            let b = Baseline::de_violacoes(&alvo);
+            let n = b.violacoes.len();
+            (
+                b,
+                baseline::Regeracao {
+                    novas: n,
+                    removidas: 0,
+                    motivos_preservados: 0,
+                },
+            )
+        }
+    };
     b.salvar(&caminho)?;
-    println!(
-        "baseline: {} violações congeladas em {} regras ({})",
-        b.violacoes.len(),
-        b.regras(),
-        cfg.gate.baseline
-    );
+    if anterior.is_some() {
+        println!(
+            "baseline: {} violações congeladas em {} regras (+{} novas, -{} removidas, {} motivo(s) preservado(s)) ({})",
+            b.violacoes.len(),
+            b.regras(),
+            delta.novas,
+            delta.removidas,
+            delta.motivos_preservados,
+            cfg.gate.baseline
+        );
+    } else {
+        println!(
+            "baseline: {} violações congeladas em {} regras ({})",
+            b.violacoes.len(),
+            b.regras(),
+            cfg.gate.baseline
+        );
+    }
     Ok(())
 }
 
-fn aceitar_no_baseline(raiz: &Path, codigo: &str, arquivo: &Path, motivo: &str) -> Result<()> {
+fn aceitar_no_baseline(
+    raiz: &Path,
+    codigo: &str,
+    arquivo: &Path,
+    motivo: &str,
+    linha_alvo: Option<usize>,
+    simbolo_alvo: Option<&str>,
+) -> Result<()> {
     let motivo = motivo.trim();
     if motivo.chars().count() < 10 {
         anyhow::bail!("--motivo precisa explicar a decisão (10 caracteres ou mais)");
@@ -410,15 +498,75 @@ fn aceitar_no_baseline(raiz: &Path, codigo: &str, arquivo: &Path, motivo: &str) 
         .congelaveis
         .into_iter()
         .filter(|v| v.codigo == codigo && v.arquivo == rel)
+        .filter(|v| linha_alvo.is_none_or(|l| v.linha == l))
+        .filter(|v| simbolo_alvo.is_none_or(|s| v.simbolo == s))
         .collect();
     let caminho = gate::caminho_baseline(raiz, &cfg);
     let mut b = Baseline::carregar(&caminho)?.unwrap_or_default();
-    let novas = b.aceitar(&alvo, motivo);
+    let r = b.aceitar(&alvo, motivo);
     b.salvar(&caminho)?;
+    let mut extra = String::new();
+    if r.atualizadas > 0 {
+        extra.push_str(&format!(", {} catraca(s) atualizada(s)", r.atualizadas));
+    }
     println!(
-        "baseline: {novas} violação(ões) de {codigo} em {rel} aceita(s); {} já estava(m) congelada(s)",
-        alvo.len() - novas
+        "baseline: {} violação(ões) de {codigo} em {rel} aceita(s){extra}; {} já estava(m) congelada(s)",
+        r.novas, r.ja_congeladas
     );
+    Ok(())
+}
+
+fn status_baseline(raiz: &Path) -> Result<()> {
+    let cfg = Config::carregar(raiz)?;
+    let caminho = gate::caminho_baseline(raiz, &cfg);
+    let Some(b) = Baseline::carregar(&caminho)? else {
+        println!(
+            "baseline: nenhum arquivo encontrado em {} (rode `guarda init` ou `guarda baseline gerar`)",
+            cfg.gate.baseline
+        );
+        return Ok(());
+    };
+    let coleta = gate::coletar(raiz, &cfg, Pedido::Tudo, &Opcoes::default())?;
+    let analisados: std::collections::HashSet<&str> =
+        coleta.analisados.iter().map(String::as_str).collect();
+    let comp = baseline::comparar(&b, coleta.congelaveis, &analisados, true);
+
+    let com_motivo = b.com_motivo();
+    let legado = b.violacoes.len() - com_motivo;
+    println!(
+        "baseline: {} entradas em {} regras ({com_motivo} com motivo, {legado} legado) ({})",
+        b.violacoes.len(),
+        b.regras(),
+        cfg.gate.baseline
+    );
+    println!(
+        "  corrigidas (podem sair): {}{}",
+        comp.corrigidas,
+        if comp.arquivos_removidos > 0 {
+            format!(" ({} em arquivos removidos)", comp.arquivos_removidos)
+        } else {
+            String::new()
+        }
+    );
+    println!("  catracas que podem apertar: {}", comp.catracas_apertadas);
+    println!("  novas fora do baseline: {}", comp.novas.len());
+
+    let mut por_regra: BTreeMap<&str, usize> = BTreeMap::new();
+    for e in &b.violacoes {
+        *por_regra.entry(e.codigo.as_str()).or_default() += 1;
+    }
+    let mut ordenado: Vec<(&str, usize)> = por_regra.into_iter().collect();
+    ordenado.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+    if !ordenado.is_empty() {
+        println!("por regra:");
+        for (c, n) in ordenado {
+            let nome = modelo::regra(c).map_or("", |r| r.nome);
+            println!("  {c} {n:>5}  {nome}");
+        }
+    }
+    if comp.corrigidas > 0 || comp.catracas_apertadas > 0 {
+        println!("dica: rode `guarda check --atualizar-baseline` para enxugar o baseline");
+    }
     Ok(())
 }
 

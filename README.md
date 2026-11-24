@@ -38,9 +38,10 @@ guarda check --arquivos A B    # só esses arquivos (arquitetura vale pelo índi
 guarda check --alterados       # só o que mudou contra HEAD, incluindo arquivos novos
 guarda check --cobertura       # roda os testes antes, para a cobertura estar em dia
 guarda check --formato json    # um objeto JSON por linha (também: sarif, texto, compacto)
-guarda check --atualizar-baseline  # tira o que foi corrigido; nunca acrescenta
-guarda baseline gerar          # regrava o baseline (decisão humana: congela dívida nova)
-guarda baseline aceitar CPX001 src/.../Icms.kt --motivo "..."  # congela só isso, com motivo
+guarda check --atualizar-baseline  # tira o que foi corrigido (e arquivos removidos); aperta catracas
+guarda baseline status         # saúde do baseline: entradas por regra, motivos, corrigidas e catracas
+guarda baseline gerar          # regrava o baseline preservando motivos (ou `--regras SEC001 SPR006`)
+guarda baseline aceitar CPX001 src/.../Icms.kt --motivo "..."  # congela só isso (aceita --linha e --simbolo)
 guarda explicar [CODIGO]       # por quê, errado e certo de uma regra (sem código: a lista)
 guarda contexto                # as regras do projeto em ~12 linhas, para o prompt da IA
 guarda integrar <alvo>         # claude | codex | antigravity | agents | git | gradle | maven

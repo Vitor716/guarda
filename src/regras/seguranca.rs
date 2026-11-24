@@ -209,24 +209,26 @@ pub fn verificar(ctx: &Contexto, v: &mut Vec<Violacao>) {
 fn atribuicao(a: &mut Achados, n: Node, nome: &str, valor: Node) {
     let fonte = a.ctx.fonte;
     let valor = sem_parenteses(valor);
-    if let Some(lit) = literal(valor, fonte) {
-        if nome_de_segredo(nome) && valor_de_segredo(&lit) && a.segredos.insert(linha(n)) {
-            a.add(
-                "SEC001",
-                n,
-                format!("credencial fixa no código ({nome})"),
-                "leia de variável de ambiente ou cofre de segredos; troque a credencial, ela já vazou no git",
-                nome,
-            );
-        }
+    if let Some(lit) = literal(valor, fonte)
+        && nome_de_segredo(nome)
+        && valor_de_segredo(&lit)
+        && a.segredos.insert(linha(n))
+    {
+        a.add(
+            "SEC001",
+            n,
+            format!("credencial fixa no código ({nome})"),
+            "leia de variável de ambiente ou cofre de segredos; troque a credencial, ela já vazou no git",
+            nome,
+        );
     }
-    if montada(valor, fonte).is_some_and(|t| parece_sql(&t)) {
-        if let Some(f) = funcao_dona(n) {
-            a.sql_montado
-                .entry(f.id())
-                .or_default()
-                .insert(nome.to_string());
-        }
+    if montada(valor, fonte).is_some_and(|t| parece_sql(&t))
+        && let Some(f) = funcao_dona(n)
+    {
+        a.sql_montado
+            .entry(f.id())
+            .or_default()
+            .insert(nome.to_string());
     }
 }
 
@@ -340,24 +342,25 @@ fn chamadas(a: &mut Achados, n: Node, c: &Chamada) {
         .map(|s| s.to_uppercase());
 
     // SEC002 SQL montado.
-    if !c.construtor && SQL_SORVEDOUROS.contains(&c.nome) {
-        if let Some(x) = arg0 {
-            let direto = montada(x, fonte).is_some_and(|t| parece_sql(&t));
-            let variavel = x.kind() == "identifier"
-                && funcao_dona(n).is_some_and(|f| {
-                    a.sql_montado
-                        .get(&f.id())
-                        .is_some_and(|s| s.contains(texto(x, fonte)))
-                });
-            if direto || variavel {
-                a.add(
-                    "SEC002",
-                    n,
-                    format!("SQL montado com concatenação em {}()", c.nome),
-                    "use parâmetros (? ou :nome) e passe os valores separados",
-                    texto(x, fonte),
-                );
-            }
+    if !c.construtor
+        && SQL_SORVEDOUROS.contains(&c.nome)
+        && let Some(x) = arg0
+    {
+        let direto = montada(x, fonte).is_some_and(|t| parece_sql(&t));
+        let variavel = x.kind() == "identifier"
+            && funcao_dona(n).is_some_and(|f| {
+                a.sql_montado
+                    .get(&f.id())
+                    .is_some_and(|s| s.contains(texto(x, fonte)))
+            });
+        if direto || variavel {
+            a.add(
+                "SEC002",
+                n,
+                format!("SQL montado com concatenação em {}()", c.nome),
+                "use parâmetros (? ou :nome) e passe os valores separados",
+                texto(x, fonte),
+            );
         }
     }
 
@@ -678,11 +681,7 @@ fn chamadas(a: &mut Achados, n: Node, c: &Chamada) {
 
     // SEC015 dado sensível no log.
     if eh_log(c, &r) {
-        let sensivel = c
-            .args
-            .iter()
-            .flat_map(|x| identificadores(*x, fonte))
-            .find(|i| nome_de_segredo(i));
+        let sensivel = c.args.iter().find_map(|x| dado_sensivel_no_log(*x, fonte));
         if let Some(i) = sensivel {
             a.add(
                 "SEC015",
@@ -771,8 +770,7 @@ fn lambda_sempre_true(n: Node, fonte: &str) -> bool {
         "lambda_expression" => n.child_by_field_name("body").map(|b| texto(b, fonte)),
         _ => filhos(n)
             .into_iter()
-            .filter(|c| c.is_named() && c.kind() != "lambda_parameters")
-            .last()
+            .rfind(|c| c.is_named() && c.kind() != "lambda_parameters")
             .map(|b| texto(b, fonte)),
     };
     corpo.is_some_and(|b| {
@@ -859,13 +857,129 @@ fn rota_liberada(c: &Chamada, fonte: &str) -> Option<String> {
         return Some(format!("anyRequest().{quem}"));
     }
     if MATCHERS.contains(&alvo.nome) {
+        let preflight = alvo.args.first().is_some_and(|x| {
+            let t = texto(*x, fonte).trim();
+            t == "OPTIONS"
+                || t == "HEAD"
+                || t.ends_with(".OPTIONS")
+                || t.ends_with(".HEAD")
+                || matches!(literal(*x, fonte).as_deref(), Some("OPTIONS" | "HEAD"))
+        });
         return alvo
             .args
             .iter()
             .filter_map(|x| literal(*x, fonte))
-            .find(|s| ampla_ou_sensivel(s));
+            .find(|s| {
+                if preflight && matches!(s.as_str(), "/**" | "/*") {
+                    return false;
+                }
+                ampla_ou_sensivel(s)
+            });
     }
     None
+}
+
+/// Variável ou campo que carrega um valor sensível ao ser logado diretamente.
+/// Além de `nome_de_segredo`, inclui `authorization`/`authHeader` (que guardam o Bearer token),
+/// mas exclui constantes ALL_CAPS (ex.: `TOKEN_HEADER` = nome do cabeçalho).
+fn nome_sensivel_no_log(nome: &str) -> bool {
+    if nome_de_segredo(nome) {
+        return true;
+    }
+    let tudo_maiuscula = nome
+        .chars()
+        .all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit());
+    if tudo_maiuscula {
+        return false;
+    }
+    let p = palavras(nome);
+    let junto = p.concat();
+    matches!(
+        junto.as_str(),
+        "authorization" | "authheader" | "authorizationheader" | "bearer" | "bearertoken" | "jwt"
+    )
+}
+
+/// Membro que devolve o próprio valor do objeto (ou um pedaço dele), não um metadado seguro.
+fn membro_expoe_valor(membro: &str) -> bool {
+    nome_sensivel_no_log(membro)
+        || matches!(
+            membro,
+            "toString"
+                | "value"
+                | "getValue"
+                | "asString"
+                | "trim"
+                | "strip"
+                | "substring"
+                | "toCharArray"
+                | "getBytes"
+                | "chars"
+                | "raw"
+                | "getRaw"
+                | "getToken"
+                | "getPassword"
+                | "getSecret"
+        )
+}
+
+/// Encontra identificador sensível efetivamente logado numa expressão de argumento.
+/// Quando `token` é apenas receptor de um getter seguro (`token.usuarioId()`,
+/// `dadosToken.perfis()`, `senha.isEmpty()`), o valor logado não é o segredo.
+fn dado_sensivel_no_log<'t>(arg: Node<'t>, fonte: &'t str) -> Option<&'t str> {
+    let mut achado: Option<&'t str> = None;
+    visitar(arg, |x| {
+        if achado.is_some() {
+            return;
+        }
+        match x.kind() {
+            "string_literal" => {
+                // Template simples do Kotlin: `$senha` (mas não `${dadosToken.usuarioId}`,
+                // cujos nós internos são visitados normalmente como AST).
+                for i in identificadores(x, fonte) {
+                    if !texto(x, fonte).contains(&format!("${{{i}.")) && nome_sensivel_no_log(i) {
+                        // Só conta se veio de `$i` (não de dentro de `${...}`).
+                        if texto(x, fonte).contains(&format!("${i}")) {
+                            achado = Some(i);
+                            return;
+                        }
+                    }
+                }
+            }
+            "identifier" => {
+                let nome = texto(x, fonte);
+                if !nome_sensivel_no_log(nome) {
+                    return;
+                }
+                // Se for receptor de método ou acesso a campo seguro, não vaza o segredo.
+                if let Some(p) = x.parent() {
+                    let membro = match p.kind() {
+                        "method_invocation" if p.child_by_field_name("object") == Some(x) => {
+                            p.child_by_field_name("name").map(|m| texto(m, fonte))
+                        }
+                        "field_access" if p.child_by_field_name("object") == Some(x) => {
+                            p.child_by_field_name("field").map(|m| texto(m, fonte))
+                        }
+                        "navigation_expression" if p.named_child(0) == Some(x) => {
+                            p.named_child(1).map(|m| {
+                                let t = texto(m, fonte);
+                                t.trim_start_matches('.')
+                            })
+                        }
+                        _ => None,
+                    };
+                    if let Some(m) = membro
+                        && !membro_expoe_valor(m)
+                    {
+                        return;
+                    }
+                }
+                achado = Some(nome);
+            }
+            _ => {}
+        }
+    });
+    achado
 }
 
 fn eh_log(c: &Chamada, r: &str) -> bool {
@@ -986,10 +1100,10 @@ fn usos<'t>(n: Node<'t>, fonte: &'t str) -> Vec<&'t str> {
 fn le_do_request(n: Node, fonte: &str) -> bool {
     let mut achou = false;
     visitar(n, |x| {
-        if let Some(c) = chamada(x, fonte) {
-            if FONTES_CHAMADAS.contains(&c.nome) {
-                achou = true;
-            }
+        if let Some(c) = chamada(x, fonte)
+            && FONTES_CHAMADAS.contains(&c.nome)
+        {
+            achou = true;
         }
         if x.kind() == "indexing_expression" || x.kind() == "index_expression" {
             let t = texto(x, fonte);
@@ -1106,20 +1220,20 @@ fn entrada_do_request(a: &mut Achados, f: Node) {
                 .zip(n.child_by_field_name("right")),
             _ => None,
         };
-        if let Some((nome, valor)) = atrib {
-            if nome.kind() == "identifier" && contaminado(valor, &sujos) {
-                sujos.insert(texto(nome, fonte));
-            }
+        if let Some((nome, valor)) = atrib
+            && nome.kind() == "identifier"
+            && contaminado(valor, &sujos)
+        {
+            sujos.insert(texto(nome, fonte));
         }
-        if n.kind() == "binary_expression" {
-            if let Some(esq) = n
+        if n.kind() == "binary_expression"
+            && let Some(esq) = n
                 .child_by_field_name("left")
                 .and_then(|x| conteudo(x, fonte))
-            {
-                let dir = n.child_by_field_name("right");
-                if esq.starts_with("redirect:") && dir.is_some_and(|d| contaminado(d, &sujos)) {
-                    achados.push((n, "redirecionamento".into(), "redirect:".into()));
-                }
+        {
+            let dir = n.child_by_field_name("right");
+            if esq.starts_with("redirect:") && dir.is_some_and(|d| contaminado(d, &sujos)) {
+                achados.push((n, "redirecionamento".into(), "redirect:".into()));
             }
         }
         let Some(c) = chamada(n, fonte) else { return };
@@ -1325,6 +1439,34 @@ class Ctl {
             [("SEC016", 3), ("SEC015", 4), ("SEC019", 6)],
             "{v:?}"
         );
+
+        let j = r#"class LogCaso {
+  void f(DecodedToken dadosToken, String token, String authHeader) {
+    log.info("usuario={}", dadosToken.usuarioId());
+    System.out.println("perfis=" + dadosToken.perfis());
+    log.info("token={}", token);
+    log.debug("auth={}", authHeader);
+    log.warn("raw={}", dadosToken.toString());
+  }
+}"#;
+        let v = achar(j, Linguagem::Java);
+        assert_eq!(
+            codigos(&v),
+            [("SEC015", 5), ("SEC015", 6), ("SEC015", 7)],
+            "{v:?}"
+        );
+
+        // Preflight CORS OPTIONS em /** não dispara SEC012.
+        let sec = r#"class Sec {
+  void f(HttpSecurity http) {
+    http.authorizeHttpRequests(a -> {
+      a.requestMatchers(HttpMethod.OPTIONS, "/**").permitAll();
+      a.requestMatchers("/actuator/**").permitAll();
+    });
+  }
+}"#;
+        let v = achar(sec, Linguagem::Java);
+        assert_eq!(codigos(&v), [("SEC012", 5)], "{v:?}");
     }
 
     #[test]

@@ -511,10 +511,14 @@ fn pos_edicao(e: &Evento) -> Result<Decisao> {
     let Acao::Edicoes(eds) = &e.acao else {
         return Ok(Decisao::Liberar);
     };
+    let analisavel = |p: &Path| {
+        let s = p.to_string_lossy().replace('\\', "/");
+        Linguagem::do_caminho(&s).is_some() || crate::recursos::tipo(&s).is_some()
+    };
     let codigo: Vec<&Edicao> = eds
         .iter()
         .filter(|ed| ed.mudanca != Mudanca::Apagar)
-        .filter(|ed| Linguagem::do_caminho(&ed.caminho.to_string_lossy()).is_some())
+        .filter(|ed| analisavel(&ed.caminho))
         .collect();
     let Some(primeira) = codigo.first() else {
         return Ok(Decisao::Liberar);

@@ -235,6 +235,17 @@ pub fn verificar(ctx: &Contexto, v: &mut Vec<Violacao>) {
     let f = ctx.fonte;
     visitar(ctx.raiz, |n| {
         match n.kind() {
+            "assert_statement" if ctx.ling == Linguagem::Java => {
+                add(
+                    ctx,
+                    v,
+                    "BUG009",
+                    n,
+                    "assert em código de produção".into(),
+                    "a JVM ignora assert sem -ea; valide com if e lance exceção ou Objects.requireNonNull",
+                    texto(n, f),
+                );
+            }
             "finally_clause" | "finally_block" => finally(ctx, n, v),
             "binary_expression" => {
                 let op = n.child_by_field_name("operator").map(|o| texto(o, f));
@@ -279,18 +290,17 @@ pub fn verificar(ctx: &Contexto, v: &mut Vec<Violacao>) {
                     op,
                     n.child_by_field_name("left"),
                     n.child_by_field_name("right"),
-                ) {
-                    if normal(texto(e, f)) == normal(texto(d, f)) {
-                        add(
-                            ctx,
-                            v,
-                            "BUG003",
-                            n,
-                            "variável atribuída a ela mesma".into(),
-                            "faltou o this. (this.x = x) ou o lado direito está errado",
-                            texto(n, f),
-                        );
-                    }
+                ) && normal(texto(e, f)) == normal(texto(d, f))
+                {
+                    add(
+                        ctx,
+                        v,
+                        "BUG003",
+                        n,
+                        "variável atribuída a ela mesma".into(),
+                        "faltou o this. (this.x = x) ou o lado direito está errado",
+                        texto(n, f),
+                    );
                 }
             }
             "if_statement" | "if_expression" if cabeca_de_cadeia(n) => ifs(ctx, n, v),
@@ -322,22 +332,21 @@ pub fn verificar(ctx: &Contexto, v: &mut Vec<Violacao>) {
             }
             _ => {}
         }
-        if let Some(c) = chamada(n, f) {
-            if c.construtor
-                && c.nome == "BigDecimal"
-                && c.args.len() == 1
-                && DECIMAL.is_match(texto(c.args[0], f).trim())
-            {
-                add(
-                    ctx,
-                    v,
-                    "BUG007",
-                    n,
-                    format!("BigDecimal de double ({})", texto(c.args[0], f)),
-                    "use BigDecimal(\"0.1\") ou BigDecimal.valueOf(0.1): o double já perdeu precisão",
-                    "BigDecimal",
-                );
-            }
+        if let Some(c) = chamada(n, f)
+            && c.construtor
+            && c.nome == "BigDecimal"
+            && c.args.len() == 1
+            && DECIMAL.is_match(texto(c.args[0], f).trim())
+        {
+            add(
+                ctx,
+                v,
+                "BUG007",
+                n,
+                format!("BigDecimal de double ({})", texto(c.args[0], f)),
+                "use BigDecimal(\"0.1\") ou BigDecimal.valueOf(0.1): o double já perdeu precisão",
+                "BigDecimal",
+            );
         }
     });
 }
@@ -385,6 +394,7 @@ mod casos {
     try { Thread.sleep(1); } catch (InterruptedException e) { log.warn("x"); }
     try { Thread.sleep(1); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
     for (int i : xs) { try { } finally { if (i > 0) continue; } }
+    assert s != null;
   }
 }"#;
         let mut v = achar(j, Linguagem::Java);
@@ -401,6 +411,7 @@ mod casos {
                 ("BUG006".into(), 7),
                 ("BUG007".into(), 10),
                 ("BUG008".into(), 12),
+                ("BUG009".into(), 15),
             ]
         );
     }

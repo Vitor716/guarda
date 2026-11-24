@@ -264,6 +264,8 @@ pub struct Relatorio {
     pub violacoes: Vec<Violacao>,
     /// Só os arquivos do escopo pedido.
     pub analises: Vec<Analise>,
+    /// Arquivos de configuração/segredo verificados neste escopo (para o baseline).
+    pub recursos_verificados: Vec<String>,
     pub arquitetura: Option<Arquitetura>,
     pub origem: Origem,
     pub ranking: Vec<Pontuacao>,
@@ -392,11 +394,13 @@ pub fn executar_com(
     };
 
     let spr004 = entidades_no_corpo(&todas, &alvo);
-    let recursos = recursos::verificar(
-        raiz,
-        &descoberta::recursos(raiz, &cfg.fontes)?,
-        quero.as_ref(),
-    );
+    let lista_recursos = descoberta::recursos(raiz, &cfg.fontes)?;
+    let recursos_verificados: Vec<String> = lista_recursos
+        .iter()
+        .filter(|rel| quero.as_ref().is_none_or(|e| e.contains(rel.as_str())))
+        .cloned()
+        .collect();
+    let recursos = recursos::verificar(raiz, &lista_recursos, quero.as_ref());
 
     let mut analises: Vec<Analise> = todas
         .into_iter()
@@ -462,6 +466,7 @@ pub fn executar_com(
     Ok(Relatorio {
         violacoes,
         analises,
+        recursos_verificados,
         arquitetura: arq,
         origem,
         ranking,

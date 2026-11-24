@@ -32,6 +32,13 @@ pub const EXPLICACOES: &[Explicacao] = &[
         certo: "@Disabled(\"ABC-12: depende do serviço de frete\") @Test void calcula() { ... }",
     },
     Explicacao {
+        codigo: "TST004",
+        titulo: "Asserção sempre verdadeira em teste (Sonar S2701, S5863)",
+        porque: "`assertTrue(true)`, `assertFalse(false)`, `assertEquals(x, x)` ou `assertNotNull(\"x\")` nunca falham e criam falsa sensação de cobertura.",
+        errado: "@Test void valida() { servico.executar(); assertTrue(true); }",
+        certo: "@Test void valida() { assertEquals(Status.OK, servico.executar()); }",
+    },
+    Explicacao {
         codigo: "PRB001",
         titulo: "Import proibido pelo guarda.yml",
         porque: "O time proibiu este import em regras.proibir.imports (ex.: uma biblioteca descontinuada).",
@@ -646,6 +653,20 @@ pub const EXPLICACOES: &[Explicacao] = &[
         porque: "Blocos de pelo menos `duplicacao.tokens-minimos` tokens iguais em dois lugares. Corrigir um bug em uma cópia e esquecer a outra é o risco. No código novo, o gate do Sonar aceita no máximo 3% de linhas duplicadas.",
         errado: "(o mesmo mapeamento de DTO copiado em dois serviços)",
         certo: "(uma função ou classe compartilhada, chamada dos dois lugares)",
+    },
+    Explicacao {
+        codigo: "SPR006",
+        titulo: "@Transactional em controlador HTTP (Spring, arquitetura em camadas)",
+        porque: "Abrir transação de banco no @RestController/@Controller segura a conexão do pool durante a serialização HTTP e mistura regra de transação com a camada web.",
+        errado: "@RestController class PedidoController {\n    @PostMapping @Transactional ResponseEntity<?> criar(...) { ... }\n}",
+        certo: "@Service class PedidoService {\n    @Transactional Pedido criar(...) { ... }\n}",
+    },
+    Explicacao {
+        codigo: "BUG009",
+        titulo: "assert em código de produção Java (Sonar S4274)",
+        porque: "Na JVM, `assert` vem desligado por padrão (só executa com `-ea`). Usar `assert` para checar nulidade ou invariante em produção faz a checagem desaparecer em runtime.",
+        errado: "assert retorno != null;\nreturn retorno.mensagem();",
+        certo: "if (retorno == null) throw new IllegalStateException(\"retorno ausente\");",
     },
 ];
 

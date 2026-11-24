@@ -4,6 +4,7 @@
 
 use super::Contexto;
 use super::estrutura::percorrer;
+use super::sintaxe::{chamada as chamada_completa, literal};
 use crate::lang::{self, filhos, linha, simbolo_dono, texto, visitar};
 use crate::modelo::Violacao;
 use regex::Regex;
@@ -129,10 +130,122 @@ pub fn verificar(ctx: &Contexto, v: &mut Vec<Violacao>) {
             if objeto == Some("Thread") && nome == Some("sleep") {
                 thread_sleep(ctx, n, v);
             }
+            assercoes_tautologicas(ctx, n, v);
         }
+        "call_expression" | "infix_expression" => assercoes_tautologicas(ctx, n, v),
         "navigation_expression" if texto(n, f) == "Thread.sleep" => thread_sleep(ctx, n, v),
         _ => {}
     });
+}
+
+fn normal(t: &str) -> String {
+    t.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+fn eh_literal_constante(n: Node, fonte: &str) -> bool {
+    literal(n, fonte).is_some()
+        || matches!(
+            n.kind(),
+            "decimal_integer_literal"
+                | "decimal_floating_point_literal"
+                | "number_literal"
+                | "float_literal"
+                | "true"
+                | "false"
+                | "boolean_literal"
+                | "character_literal"
+        )
+}
+
+/// TST004: asserção tautológica/sempre verdadeira (Sonar S2701/S5863).
+/// Fecha a brecha de escrever `assertTrue(true)` ou `assertEquals(x, x)` só para passar na TST001.
+fn assercoes_tautologicas(ctx: &Contexto, n: Node, v: &mut Vec<Violacao>) {
+    let f = ctx.fonte;
+    let mut reportar = |msg: &str| {
+        v.push(Violacao::nova(
+            "TST004",
+            ctx.arquivo,
+            linha(n),
+            msg,
+            "verifique um valor calculado pelo código testado em vez de uma condição sempre verdadeira",
+            simbolo_dono(n, f),
+            texto(n, f),
+            None,
+        ));
+    };
+    if n.kind() == "infix_expression" {
+        if chamada(n, f).is_some_and(|op| matches!(op, "shouldBe" | "shouldEqual")) {
+            let esq = n.named_child(0).map(|x| normal(texto(x, f)));
+            let dir = n
+                .named_child(n.named_child_count().saturating_sub(1) as u32)
+                .map(|x| normal(texto(x, f)));
+            if let (Some(e), Some(d)) = (esq, dir)
+                && !e.is_empty()
+                && e == d
+                && !e.contains('(')
+            {
+                reportar("asserção sempre verdadeira (mesmo valor nos dois lados)");
+            }
+        }
+        return;
+    }
+    let Some(c) = chamada_completa(n, f) else {
+        return;
+    };
+    match c.nome {
+        "assertTrue" if c.args.iter().any(|a| normal(texto(*a, f)) == "true") => {
+            reportar("assertTrue(true) é sempre verdadeiro");
+        }
+        "assertFalse" if c.args.iter().any(|a| normal(texto(*a, f)) == "false") => {
+            reportar("assertFalse(false) é sempre verdadeiro");
+        }
+        "assertEquals" | "assertSame" if c.args.len() == 2 => {
+            let (e, d) = (normal(texto(c.args[0], f)), normal(texto(c.args[1], f)));
+            if !e.is_empty() && e == d && !e.contains('(') {
+                reportar("asserção compara a mesma expressão com ela mesma");
+            }
+        }
+        "assertNotNull" if c.args.len() == 1 && eh_literal_constante(c.args[0], f) => {
+            reportar("assertNotNull de literal nunca falha");
+        }
+        "isTrue"
+            if c.args.is_empty()
+                && c.receptor
+                    .and_then(|r| chamada_completa(r, f))
+                    .is_some_and(|r| {
+                        r.nome == "assertThat"
+                            && r.args.len() == 1
+                            && normal(texto(r.args[0], f)) == "true"
+                    }) =>
+        {
+            reportar("assertThat(true).isTrue() é sempre verdadeiro");
+        }
+        "isFalse"
+            if c.args.is_empty()
+                && c.receptor
+                    .and_then(|r| chamada_completa(r, f))
+                    .is_some_and(|r| {
+                        r.nome == "assertThat"
+                            && r.args.len() == 1
+                            && normal(texto(r.args[0], f)) == "false"
+                    }) =>
+        {
+            reportar("assertThat(false).isFalse() é sempre verdadeiro");
+        }
+        "isEqualTo" | "isSameAs" if c.args.len() == 1 => {
+            if let Some(r) = c
+                .receptor
+                .and_then(|r| chamada_completa(r, f))
+                .filter(|r| r.nome == "assertThat" && r.args.len() == 1)
+            {
+                let (e, d) = (normal(texto(r.args[0], f)), normal(texto(c.args[0], f)));
+                if !e.is_empty() && e == d && !e.contains('(') {
+                    reportar("assertThat compara a mesma expressão com ela mesma");
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 fn thread_sleep(ctx: &Contexto, n: Node, v: &mut Vec<Violacao>) {
@@ -183,10 +296,11 @@ mod casos {
     @Test void comAssertJ() { assertThat(f()).isEqualTo(1); }
     @Test void comMock() { s.f(); verify(repo).save(any()); }
     @Test(expected = IllegalStateException.class) void junit4() { s.f(); }
-    @Disabled @Test void desligado() { assertTrue(true); }
-    @Disabled(\"ABC-1: instável no CI\") @Test void comMotivo() { assertTrue(true); }
-    @Test void dorme() throws Exception { Thread.sleep(100); assertTrue(true); }
+    @Disabled @Test void desligado() { assertEquals(1, f()); }
+    @Disabled(\"ABC-1: instável no CI\") @Test void comMotivo() { assertEquals(1, f()); }
+    @Test void dorme() throws Exception { Thread.sleep(100); assertEquals(1, f()); }
     @Test void stub() { when(r.f()).thenReturn(1); }
+    @Test void tautologias() { assertTrue(true); assertEquals(x, x); assertNotNull(\"ok\"); assertThat(true).isTrue(); }
 }";
         assert_eq!(
             achar(j, Linguagem::Java),
@@ -195,6 +309,10 @@ mod casos {
                 ("TST003".into(), 7),
                 ("TST002".into(), 9),
                 ("TST001".into(), 10),
+                ("TST004".into(), 11),
+                ("TST004".into(), 11),
+                ("TST004".into(), 11),
+                ("TST004".into(), 11),
             ]
         );
     }
@@ -205,11 +323,17 @@ mod casos {
     @Test fun `sem assercao`() { servico.salvar(x) }
     @Test fun `kotest`() { f() shouldBe 1 }
     @Test fun `mockk`() { s.f(); coVerify { repo.save(any()) } }
-    @Ignore @Test fun `desligado`() { assertEquals(1, 1) }
+    @Ignore @Test fun `desligado`() { assertEquals(1, f()) }
+    @Test fun `tautologia`() { valor shouldBe valor; assertFalse(false) }
 }";
         assert_eq!(
             achar(k, Linguagem::Kotlin),
-            [("TST001".into(), 2), ("TST003".into(), 5)]
+            [
+                ("TST001".into(), 2),
+                ("TST003".into(), 5),
+                ("TST004".into(), 6),
+                ("TST004".into(), 6),
+            ]
         );
     }
 }

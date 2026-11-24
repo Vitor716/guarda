@@ -86,7 +86,7 @@ pub const REGRAS: &[Regra] = &[
         "God Class (aproximação sintática)",
         Aviso,
         Aviso,
-        false,
+        true,
     ),
     r("SML002", "código duplicado", Aviso, Aviso, false),
     r("SML003", "número mágico", Aviso, Aviso, false),
@@ -321,6 +321,13 @@ pub const REGRAS: &[Regra] = &[
         false,
     ),
     r(
+        "SPR006",
+        "@Transactional em controlador HTTP",
+        Aviso,
+        Aviso,
+        false,
+    ),
+    r(
         "BUG001",
         "return ou throw dentro de finally",
         Aviso,
@@ -370,6 +377,13 @@ pub const REGRAS: &[Regra] = &[
         Erro,
         false,
     ),
+    r(
+        "BUG009",
+        "assert usado em código de produção",
+        Aviso,
+        Erro,
+        false,
+    ),
     r("SML010", "bloco vazio", Aviso, Aviso, false),
     r(
         "SML011",
@@ -396,6 +410,13 @@ pub const REGRAS: &[Regra] = &[
     r("TST001", "teste sem asserção", Aviso, Erro, false),
     r("TST002", "Thread.sleep em teste", Aviso, Aviso, false),
     r("TST003", "teste desativado sem motivo", Aviso, Aviso, false),
+    r(
+        "TST004",
+        "asserção sempre verdadeira em teste",
+        Aviso,
+        Erro,
+        false,
+    ),
     r(
         "PRB001",
         "import proibido pelo guarda.yml",

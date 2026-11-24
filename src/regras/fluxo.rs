@@ -173,21 +173,21 @@ fn ifs(ctx: &Contexto, n: Node, v: &mut Vec<Violacao>) {
     };
     let cond_txt = texto(cond, ctx.fonte);
     // CND004: if sem else cujo corpo é só outro if sem else (Sonar S1066).
-    if senao.is_none() {
-        if let [unico] = instrucoes(entao)[..] {
-            let (_, interno_entao, interno_senao) = partes(unico);
-            if eh_if(unico.kind()) && interno_senao.is_none() && interno_entao.is_some() {
-                v.push(Violacao::nova(
-                    "CND004",
-                    ctx.arquivo,
-                    linha(n),
-                    "if dentro de if sem else: dá para juntar",
-                    "junte as condições com && (ou extraia para uma função com nome)",
-                    simbolo_dono(n, ctx.fonte),
-                    cond_txt,
-                    None,
-                ));
-            }
+    if senao.is_none()
+        && let [unico] = instrucoes(entao)[..]
+    {
+        let (_, interno_entao, interno_senao) = partes(unico);
+        if eh_if(unico.kind()) && interno_senao.is_none() && interno_entao.is_some() {
+            v.push(Violacao::nova(
+                "CND004",
+                ctx.arquivo,
+                linha(n),
+                "if dentro de if sem else: dá para juntar",
+                "junte as condições com && (ou extraia para uma função com nome)",
+                simbolo_dono(n, ctx.fonte),
+                cond_txt,
+                None,
+            ));
         }
     }
     if let Some(senao) = senao.filter(|s| !eh_if(s.kind())) {

@@ -336,13 +336,16 @@ static SEGREDO_NO_VALOR: LazyLock<Regex> = LazyLock::new(|| {
         r"|github_pat_[A-Za-z0-9_]{40,}",
         r"|xox[abprs]-[A-Za-z0-9-]{10,}",
         r"|sk_live_[0-9A-Za-z]{20,}",
+        r"|sk-(?:proj|ant)-[A-Za-z0-9_-]{20,}",
         r"|AIza[0-9A-Za-z_-]{35}",
         r"|eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}",
+        r"|(?:jdbc:)?(?:postgresql|postgres|mysql|mariadb|mongodb(?:\+srv)?|redis|rediss|amqp|amqps)://[^/\s:@${}<>]*:[^/\s@${}<>]{4,}@[^\s/]+",
     ))
     .expect("regex")
 });
 
-/// Formato de segredo conhecido (chave da AWS, chave privada, token do GitHub, JWT...).
+/// Formato de segredo conhecido (chave da AWS, chave privada, token do GitHub, JWT,
+/// chave de API de IA, credencial em URL de banco/broker...).
 pub fn formato_de_segredo(valor: &str) -> Option<&'static str> {
     let m = SEGREDO_NO_VALOR.find(valor)?;
     let s = m.as_str();
@@ -356,8 +359,12 @@ pub fn formato_de_segredo(valor: &str) -> Option<&'static str> {
         "token do Slack"
     } else if s.starts_with("sk_live_") {
         "chave do Stripe"
+    } else if s.starts_with("sk-proj-") || s.starts_with("sk-ant-") {
+        "chave de API"
     } else if s.starts_with("AIza") {
         "chave do Google"
+    } else if s.contains("://") {
+        "credencial embutida em URL"
     } else {
         "JWT"
     })
@@ -431,13 +438,12 @@ pub fn anotacoes<'t>(n: Node<'t>, fonte: &'t str) -> Vec<(&'t str, Node<'t>)> {
         }
     }
     // Parâmetro do Kotlin: as anotações vêm no irmão anterior (`parameter_modifiers`).
-    if n.kind() == "parameter" {
-        if let Some(p) = n
+    if n.kind() == "parameter"
+        && let Some(p) = n
             .prev_named_sibling()
             .filter(|p| p.kind() == "parameter_modifiers")
-        {
-            junta(p);
-        }
+    {
+        junta(p);
     }
     v
 }
@@ -512,6 +518,15 @@ mod casos {
         assert_eq!(
             formato_de_segredo("x AKIAABCDEFGHIJKLMNOP y"),
             Some("chave de acesso da AWS")
+        );
+        assert_eq!(
+            formato_de_segredo("jdbc:postgresql://admin:s3nh4Forte@db.interno:5432/app"),
+            Some("credencial embutida em URL")
+        );
+        assert!(formato_de_segredo("jdbc:postgresql://admin:${DB_PASS}@db:5432/app").is_none());
+        assert_eq!(
+            formato_de_segredo("sk-ant-api03-1234567890abcdefghij"),
+            Some("chave de API")
         );
     }
 

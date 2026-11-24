@@ -448,7 +448,7 @@ pub fn classe(ctx: &Contexto, c: Node, codigo: &[bool], v: &mut Vec<Violacao>) {
                 "quebre a classe pelos grupos de métodos que usam os mesmos campos",
                 simbolo,
                 "",
-                None,
+                Some(wmc),
             ));
         }
     }

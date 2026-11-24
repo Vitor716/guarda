@@ -31,6 +31,7 @@ pub struct Resultado {
     pub novas: Vec<Violacao>,
     pub congeladas: usize,
     pub corrigidas: usize,
+    pub catracas_apertadas: usize,
     pub falhou: bool,
     pub tempo: Duration,
     /// Observação para o rodapé (ex.: cobertura desatualizada).
@@ -51,6 +52,8 @@ pub struct Coleta {
     pub notas: Vec<String>,
     /// Arquivos (e rótulos como `[cobertura]`) verificados nesta execução.
     pub analisados: HashSet<String>,
+    /// Verdadeiro quando o projeto inteiro foi verificado (`Pedido::Tudo`).
+    pub escopo_total: bool,
 }
 
 const DA_MUDANCA: &[&str] = &["COV000", "COV001", "GRD001"];
@@ -84,18 +87,27 @@ fn coletar_em<'s, 'a: 's>(
     });
 
     let mut extras = Vec::new();
+    let escopo_total = matches!(pedido, Pedido::Tudo);
     let globais = !matches!(pedido, Pedido::Arquivos(_));
+    let mut extras_analisados = Vec::new();
     let escopo = match pedido {
         Pedido::Tudo => Escopo::Tudo,
-        Pedido::Arquivos(v) => Escopo::Arquivos(v),
+        Pedido::Arquivos(v) => {
+            extras_analisados.extend(v.iter().cloned());
+            Escopo::Arquivos(v)
+        }
         Pedido::Alterados => {
             let alterados = descoberta::alterados(raiz)?;
             extras = grd001(&alterados, cfg);
+            extras_analisados.extend(alterados.iter().cloned());
             Escopo::Arquivos(alterados)
         }
     };
     let mut rel = motor::executar(raiz, cfg, &escopo)?;
     let mut analisados: HashSet<String> = rel.analises.iter().map(|x| x.arquivo.clone()).collect();
+    analisados.extend(rel.recursos_verificados.iter().cloned());
+    // Inclui arquivos pedidos/alterados (inclusive deletados no git) para limpar entradas obsoletas.
+    analisados.extend(extras_analisados);
     if globais {
         analisados.insert("[cobertura]".into());
     }
@@ -172,6 +184,7 @@ fn coletar_em<'s, 'a: 's>(
         da_mudanca: pos_baseline,
         notas,
         analisados,
+        escopo_total,
     })
 }
 
@@ -182,6 +195,7 @@ pub fn verificar(raiz: &Path, cfg: &Config, pedido: Pedido, op: &Opcoes) -> Resu
         da_mudanca,
         notas,
         analisados,
+        escopo_total,
         ..
     } = coletar(raiz, cfg, pedido, op)?;
     let analisados: HashSet<&str> = analisados.iter().map(String::as_str).collect();
@@ -192,9 +206,9 @@ pub fn verificar(raiz: &Path, cfg: &Config, pedido: Pedido, op: &Opcoes) -> Resu
     } else {
         Baseline::carregar(&caminho)?
     };
-    let (mut novas, congeladas, corrigidas) = match &bl {
+    let (mut novas, congeladas, corrigidas, catracas_apertadas) = match &bl {
         Some(b) => {
-            let c = baseline::comparar(b, congelaveis, &analisados);
+            let c = baseline::comparar(b, congelaveis, &analisados, escopo_total);
             if op.atualizar_baseline {
                 Baseline {
                     versao: 1,
@@ -202,9 +216,9 @@ pub fn verificar(raiz: &Path, cfg: &Config, pedido: Pedido, op: &Opcoes) -> Resu
                 }
                 .salvar(&caminho)?;
             }
-            (c.novas, c.congeladas, c.corrigidas)
+            (c.novas, c.congeladas, c.corrigidas, c.catracas_apertadas)
         }
-        None => (congelaveis, 0, 0),
+        None => (congelaveis, 0, 0, 0),
     };
     novas.extend(da_mudanca);
     novas.sort_by(|a, b| a.chave_ordem().cmp(&b.chave_ordem()));
@@ -217,6 +231,7 @@ pub fn verificar(raiz: &Path, cfg: &Config, pedido: Pedido, op: &Opcoes) -> Resu
         novas,
         congeladas,
         corrigidas,
+        catracas_apertadas,
         falhou,
         tempo: inicio.elapsed(),
         nota: (!notas.is_empty()).then(|| notas.join("; ")),

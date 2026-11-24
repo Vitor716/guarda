@@ -125,6 +125,36 @@ fn auto_chamada(ctx: &Contexto, classe: Node, v: &mut Vec<Violacao>) {
     }
 }
 
+fn eh_controlador(classe: Node, fonte: &str) -> bool {
+    anotacoes(classe, fonte)
+        .iter()
+        .any(|(a, _)| matches!(*a, "RestController" | "Controller"))
+}
+
+/// SPR006: @Transactional na classe ou em métodos de um controlador HTTP.
+fn transacional_em_controlador(ctx: &Contexto, classe: Node, v: &mut Vec<Violacao>) {
+    let f = ctx.fonte;
+    if !eh_controlador(classe, f) {
+        return;
+    }
+    let msg = "@Transactional em controlador HTTP";
+    let dica = "mova @Transactional para o serviço/caso de uso; transação na camada web segura conexão durante o HTTP";
+    if let Some((_, no)) = anotacoes(classe, f)
+        .into_iter()
+        .find(|(a, _)| *a == "Transactional")
+    {
+        add(ctx, v, "SPR006", no, msg.into(), dica, "Transactional");
+    }
+    for m in metodos(classe) {
+        if let Some((_, no)) = anotacoes(m, f)
+            .into_iter()
+            .find(|(a, _)| *a == "Transactional")
+        {
+            add(ctx, v, "SPR006", no, msg.into(), dica, "Transactional");
+        }
+    }
+}
+
 pub fn verificar(ctx: &Contexto, v: &mut Vec<Violacao>) {
     let f = ctx.fonte;
     if !f.contains('@') {
@@ -134,6 +164,7 @@ pub fn verificar(ctx: &Contexto, v: &mut Vec<Violacao>) {
         let k = n.kind();
         if eh_classe(k) {
             auto_chamada(ctx, n, v);
+            transacional_em_controlador(ctx, n, v);
             return;
         }
         let anots = || anotacoes(n, f);
@@ -156,31 +187,31 @@ pub fn verificar(ctx: &Contexto, v: &mut Vec<Violacao>) {
             }
             _ if eh_funcao(k) => {
                 let lista = anots();
-                if privado(n, f) {
-                    if let Some((a, no)) = lista.iter().find(|(a, _)| PROXY.contains(a)) {
-                        add(
-                            ctx,
-                            v,
-                            "SPR002",
-                            *no,
-                            format!("@{a} em método private não tem efeito"),
-                            "o proxy do Spring só intercepta método público chamado de fora do bean",
-                            a,
-                        );
-                    }
+                if privado(n, f)
+                    && let Some((a, no)) = lista.iter().find(|(a, _)| PROXY.contains(a))
+                {
+                    add(
+                        ctx,
+                        v,
+                        "SPR002",
+                        *no,
+                        format!("@{a} em método private não tem efeito"),
+                        "o proxy do Spring só intercepta método público chamado de fora do bean",
+                        a,
+                    );
                 }
-                if let Some((_, no)) = lista.iter().find(|(a, _)| *a == "RequestMapping") {
-                    if !texto(*no, f).contains("method") {
-                        add(
-                            ctx,
-                            v,
-                            "SPR005",
-                            *no,
-                            "@RequestMapping sem método HTTP".into(),
-                            "use @GetMapping, @PostMapping... (ou method = RequestMethod.X)",
-                            "RequestMapping",
-                        );
-                    }
+                if let Some((_, no)) = lista.iter().find(|(a, _)| *a == "RequestMapping")
+                    && !texto(*no, f).contains("method")
+                {
+                    add(
+                        ctx,
+                        v,
+                        "SPR005",
+                        *no,
+                        "@RequestMapping sem método HTTP".into(),
+                        "use @GetMapping, @PostMapping... (ou method = RequestMethod.X)",
+                        "RequestMapping",
+                    );
                 }
             }
             _ => {}
@@ -249,6 +280,15 @@ class Pedidos {
         assert_eq!(
             achar(k, Linguagem::Kotlin),
             [("SPR001".to_string(), 3), ("SPR002".into(), 5)]
+        );
+    }
+
+    #[test]
+    fn transacional_em_controller() {
+        let j = "@RestController\nclass PedidoController {\n  @PostMapping\n  @Transactional\n  public void criar() {}\n}\n@Controller\n@Transactional\nclass OutroController {}";
+        assert_eq!(
+            achar(j, Linguagem::Java),
+            [("SPR006".to_string(), 4), ("SPR006".into(), 8)]
         );
     }
 }

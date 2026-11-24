@@ -88,3 +88,56 @@ Testado de verdade (não só nos testes do repositório):
 - Os minutos do GitHub Actions em repositório privado contam na cota da conta; o runner macOS
   conta 10× e o Windows 2×. O release roda só quando uma tag é empurrada.
 - POL002 olha um arquivo por vez; o mesmo switch espalhado por classes diferentes não aparece.
+
+## Lote 5 + Baselines e calibração em projetos reais (2026-11-24)
+
+### Melhorias no sistema de baselines
+
+- **Recursos no baseline (`SEC001`/`SEC017`/`SEC018`)**: arquivos de configuração/segredo
+  verificados por `recursos::verificar` agora entram no conjunto de analisados do gate; corrigir
+  um segredo em `application.properties` ou `application.yml` remove a entrada em
+  `check --atualizar-baseline`.
+- **Arquivos removidos (fim de entradas zumbis)**: em verificação do projeto inteiro
+  (`Pedido::Tudo`) e em `--alterados`, arquivos deletados/renomeados são contados como corrigidos
+  e removidos do baseline em `--atualizar-baseline`.
+- **Catraca determinística em sobrecargas**: pareamento do maior valor atual para o menor por
+  chave, evitando falso positivo quando há dois métodos sobrecarregados com o mesmo símbolo e
+  valores diferentes no baseline.
+- **`SML001` (God Class) com catraca**: guarda a complexidade total (WMC), impedindo que uma
+  God Class congelada continue crescendo.
+- **`guarda baseline aceitar`**: agora atualiza catracas que cresceram (gravando novo limite e
+  motivo) e aceita filtros cirúrgicos `--linha <N>` e `--simbolo <S>`.
+- **`guarda baseline gerar`**: preserva os `motivo`s já registrados em vez de apagá-los,
+  mostra o delta (`+novas, -removidas, motivos preservados`) e aceita `--regras CODIGO...` para
+  congelar só regras recém-ativadas sem tocar nas demais.
+- **`guarda baseline status`**: diagnóstico da saúde do baseline (entradas por regra, legado ×
+  aceitas com motivo, corrigidas, arquivos removidos e catracas que podem apertar).
+
+### Calibração e novos cenários validados
+
+- **`SEC015` (log com dado sensível)**: corrigidos 9/10 falsos positivos no `srv-usuario-api`
+  causados por chamadas a getters seguros sobre objetos com "token" no nome (`dadosToken.usuarioId()`,
+  `dadosToken.perfis()`). Passou a capturar também `authHeader`/`authorization` logados diretamente
+  (encontrou vazamento real do header `Authorization` na l.73 do `JwtAutenticacaoFilter.java`).
+- **`SEC012` (rota liberada)**: `requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()` (preflight
+  CORS) não gera mais falso positivo.
+- **`SEC017` (configuração insegura)**: ampliada para `server.error.include-stacktrace: on_param`/`on-param`,
+  `server.error.include-exception: true`, `management.endpoint.health.show-details: always`,
+  `spring.h2.console.enabled: true` e exposição explícita de endpoints sensíveis do Actuator
+  (`env`, `heapdump`, `shutdown`, `configprops`, `beans`, `mappings`, `threaddump`, `logfile`).
+- **`SEC001`**: adicionada detecção de credenciais embutidas em URLs (`jdbc:postgresql://user:pass@host`,
+  `redis://`, `mongodb://`, `amqp://`) e chaves `sk-proj-`/`sk-ant-`.
+- **Hook `pos-edicao`**: agora também verifica arquivos de configuração/segredo (`application*.yml|properties`, `.env`).
+- **Novas regras (entram como aviso)**:
+  - `SPR006` (`@Transactional` em `@RestController`/`@Controller`, alvo: aviso).
+  - `BUG009` (`assert` em código de produção Java — Sonar S4274, alvo: erro).
+  - `TST004` (asserção tautológica em teste: `assertTrue(true)`, `assertEquals(x, x)`, `x shouldBe x`, `assertNotNull("...")` — Sonar S2701/S5863, alvo: erro; fecha a brecha contra IA tentando burlar `TST001`).
+
+### Medição — 4 projetos locais (cópias dos fontes, 0 erros de parse)
+
+| Projeto | Arquivos | Tempo s/ cache | Achados Lote 5 + novos | Falsos positivos |
+| --- | --- | --- | --- | --- |
+| srv-usuario-api | 282 Java | 0,13 s | SEC001 4, SEC008 2, SEC012 1, SEC014 1, SEC015 2, SEC017 1, SPR001 1, SPR006 21, SML010 1, SML011 1, CND004 1, JV006 4 | 0 (SEC015: 9 FPs eliminados; SEC012: 1 FP eliminado) |
+| srvcondominioapi | 157 Java | 0,08 s | SEC001 2, SEC017 2, SPR006 4, BUG009 1, CND004 2 | 0 |
+| flow-study | 83 Kotlin | 0,09 s | 0 | 0 |
+| contas-termometro-project | 127 Kotlin + 12 Java | 0,12 s | SEC002 2, SML011 1 | 0 |
