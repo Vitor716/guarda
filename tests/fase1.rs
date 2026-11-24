@@ -210,6 +210,13 @@ fn grd001_avisa_quando_a_config_muda() {
     );
     assert_eq!(c, 0);
     assert!(o.contains("GRD001"), "{o}");
+    // O mesmo aviso não se repete a cada encerramento da mesma sessão.
+    let (c, o, _) = hook(
+        r,
+        "final",
+        json!({"session_id": "s", "cwd": caminho(r, "")}),
+    );
+    assert_eq!((c, o.trim()), (0, ""));
 }
 
 #[test]

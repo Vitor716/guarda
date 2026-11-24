@@ -295,8 +295,11 @@ fn final_(entrada: &Value) -> Result<Resposta> {
 
     if !bloqueia {
         estado.tentativas = 0;
+        // Avisos (ex.: GRD001) não seguram a IA; você fica sabendo uma vez por sessão.
+        estado.liberadas.extend(pendentes.iter().map(digital));
+        estado.liberadas.sort();
+        estado.liberadas.dedup();
         salvar(&estado)?;
-        // Avisos (ex.: GRD001) não seguram a IA, mas você fica sabendo.
         let avisos: Vec<String> = pendentes
             .iter()
             .map(|v| format!("{} {}:{} {}", v.codigo, v.arquivo, v.linha, v.mensagem))
