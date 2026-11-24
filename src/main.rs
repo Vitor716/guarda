@@ -2,8 +2,12 @@
 
 mod arquitetura;
 mod baseline;
+mod cache;
 mod config;
 mod descoberta;
+mod gate;
+mod hook;
+mod integracao;
 mod lang;
 mod modelo;
 mod motor;
@@ -14,9 +18,9 @@ use anyhow::{Context, Result, bail};
 use baseline::Baseline;
 use clap::{Parser, Subcommand, ValueEnum};
 use config::Config;
-use modelo::Severidade;
+use gate::{Opcoes, Pedido};
 use motor::{Escopo, Origem, Relatorio};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -42,6 +46,9 @@ enum Cmd {
         /// Sobrescreve um guarda.yml existente
         #[arg(long)]
         forcar: bool,
+        /// Também integra com o agente (contexto no CLAUDE.md/AGENTS.md e hooks)
+        #[arg(long, value_enum)]
+        ia: Option<AgenteArg>,
     },
     /// Baseline do legado
     Baseline {
@@ -53,6 +60,22 @@ enum Cmd {
         #[arg(default_value = ".")]
         raiz: PathBuf,
     },
+    /// Imprime as regras do projeto em poucas linhas, para o prompt da IA
+    Contexto {
+        #[arg(default_value = ".")]
+        raiz: PathBuf,
+    },
+    /// Escreve o contexto no CLAUDE.md (e os hooks no .claude/settings.json) ou no AGENTS.md
+    Integrar {
+        #[arg(value_enum)]
+        agente: AgenteArg,
+        #[arg(default_value = ".")]
+        raiz: PathBuf,
+    },
+    /// Hook do Claude Code: lê o evento no stdin (proteger | pos-edicao | final)
+    Hook { evento: String },
+    /// Imprime o JSON Schema do guarda.yml
+    Schema,
     /// Imprime a árvore sintática de um arquivo (para escrever regras)
     #[command(hide = true)]
     Arvore { arquivo: PathBuf },
@@ -65,6 +88,23 @@ enum BaselineCmd {
         #[arg(default_value = ".")]
         raiz: PathBuf,
     },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum AgenteArg {
+    /// Claude Code: CLAUDE.md e hooks em .claude/settings.json
+    Claude,
+    /// Outros agentes: AGENTS.md
+    Agents,
+}
+
+impl From<AgenteArg> for integracao::Agente {
+    fn from(a: AgenteArg) -> Self {
+        match a {
+            AgenteArg::Claude => Self::Claude,
+            AgenteArg::Agents => Self::Agents,
+        }
+    }
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -98,14 +138,24 @@ struct CheckArgs {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    let ok = |r: Result<()>| r.map(|_| ExitCode::SUCCESS);
     let r = match cli.cmd {
         Cmd::Check(a) => check(a),
-        Cmd::Init { raiz, forcar } => init(&raiz, forcar).map(|_| ExitCode::SUCCESS),
+        Cmd::Init { raiz, forcar, ia } => ok(init(&raiz, forcar, ia)),
         Cmd::Baseline {
             acao: BaselineCmd::Gerar { raiz },
-        } => gerar_baseline(&raiz).map(|_| ExitCode::SUCCESS),
-        Cmd::Medir { raiz } => medir(&raiz).map(|_| ExitCode::SUCCESS),
-        Cmd::Arvore { arquivo } => arvore(&arquivo).map(|_| ExitCode::SUCCESS),
+        } => ok(gerar_baseline(&raiz)),
+        Cmd::Medir { raiz } => ok(medir(&raiz)),
+        Cmd::Contexto { raiz } => ok(Config::carregar(&raiz)
+            .and_then(|cfg| integracao::contexto(&raiz, &cfg))
+            .map(|t| print!("{t}"))),
+        Cmd::Integrar { agente, raiz } => ok(integrar(&raiz, agente)),
+        Cmd::Hook { evento } => return rodar_hook(&evento),
+        Cmd::Schema => {
+            print!("{}", config::schema());
+            Ok(ExitCode::SUCCESS)
+        }
+        Cmd::Arvore { arquivo } => ok(arvore(&arquivo)),
     };
     match r {
         Ok(c) => c,
@@ -116,15 +166,41 @@ fn main() -> ExitCode {
     }
 }
 
-fn caminho_baseline(raiz: &Path, cfg: &Config) -> PathBuf {
-    raiz.join(&cfg.gate.baseline)
+/// Hooks nunca devolvem exit 2 por erro próprio: só por decisão (bloquear).
+fn rodar_hook(evento: &str) -> ExitCode {
+    match hook::executar(evento) {
+        Ok(hook::Resposta::Liberar) => ExitCode::SUCCESS,
+        Ok(hook::Resposta::LiberarComMensagem(json)) => {
+            println!("{json}");
+            ExitCode::SUCCESS
+        }
+        Ok(hook::Resposta::Bloquear(texto)) => {
+            eprintln!("{texto}");
+            ExitCode::from(2)
+        }
+        Err(e) => {
+            eprintln!("guarda hook {evento}: {e:#}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn integrar(raiz: &Path, agente: AgenteArg) -> Result<()> {
+    let cfg = Config::carregar(raiz)?;
+    let escritos = integracao::integrar(raiz, &cfg, agente.into())?;
+    println!("integrado: {}", escritos.join(", "));
+    if matches!(agente, AgenteArg::Claude) {
+        println!("hooks: proteger (antes de editar), pos-edicao, final (antes de encerrar)");
+        println!("o comando `guarda` precisa estar no PATH do Claude Code");
+    }
+    Ok(())
 }
 
 fn check(a: CheckArgs) -> Result<ExitCode> {
     let raiz = &a.raiz;
     let cfg = Config::carregar(raiz)?;
-    let escopo = if a.alterados {
-        Escopo::Arquivos(descoberta::alterados(raiz)?)
+    let pedido = if a.alterados {
+        Pedido::Alterados
     } else if !a.arquivos.is_empty() {
         let base = std::path::absolute(raiz)?;
         let mut rels = Vec::new();
@@ -134,52 +210,29 @@ fn check(a: CheckArgs) -> Result<ExitCode> {
                 .with_context(|| format!("{} está fora de {}", f.display(), raiz.display()))?;
             rels.push(rel);
         }
-        Escopo::Arquivos(rels)
+        Pedido::Arquivos(rels)
     } else {
-        Escopo::Tudo
+        Pedido::Tudo
     };
-    let rel = motor::executar(raiz, &cfg, &escopo)?;
-    let analisados: HashSet<&str> = rel.analises.iter().map(|x| x.arquivo.as_str()).collect();
-
-    let caminho = caminho_baseline(raiz, &cfg);
-    let bl = if a.sem_baseline {
-        None
-    } else {
-        Baseline::carregar(&caminho)?
+    let op = Opcoes {
+        sem_baseline: a.sem_baseline,
+        atualizar_baseline: a.atualizar_baseline,
     };
-    let (novas, congeladas) = match &bl {
-        Some(b) => {
-            let c = baseline::comparar(b, rel.violacoes.clone(), &analisados);
-            if a.atualizar_baseline {
-                let corrigidas = c.corrigidas;
-                Baseline {
-                    versao: 1,
-                    violacoes: c.mantidas,
-                }
-                .salvar(&caminho)?;
-                if corrigidas > 0 {
-                    eprintln!("baseline: {corrigidas} corrigida(s) removida(s)");
-                }
-            }
-            (c.novas, c.congeladas)
-        }
-        None => (rel.violacoes.clone(), 0),
-    };
-
-    let falhou = match cfg.gate.falhar_em.as_str() {
-        "aviso" => !novas.is_empty(),
-        _ => novas.iter().any(|v| v.severidade == Severidade::Erro),
-    };
+    let r = gate::verificar(raiz, &cfg, pedido, &op)?;
+    if a.atualizar_baseline && r.corrigidas > 0 {
+        eprintln!("baseline: {} corrigida(s) removida(s)", r.corrigidas);
+    }
+    let falhou = r.falhou;
     match a.formato {
         Formato::Compacto => {
-            let r = saida::Resumo {
-                congeladas,
-                tempo: rel.tempo,
+            let resumo = saida::Resumo {
+                congeladas: r.congeladas,
+                tempo: r.tempo,
                 falhou,
             };
-            print!("{}", saida::compacta(&novas, a.max, &r));
+            print!("{}", saida::compacta(&r.novas, a.max, &resumo));
         }
-        Formato::Json => print!("{}", saida::json(&novas)),
+        Formato::Json => print!("{}", saida::json(&r.novas)),
     }
     Ok(if falhou {
         ExitCode::from(1)
@@ -192,7 +245,7 @@ fn gerar_baseline(raiz: &Path) -> Result<()> {
     let cfg = Config::carregar(raiz)?;
     let rel = motor::executar(raiz, &cfg, &Escopo::Tudo)?;
     let b = Baseline::de_violacoes(&rel.violacoes);
-    let caminho = caminho_baseline(raiz, &cfg);
+    let caminho = gate::caminho_baseline(raiz, &cfg);
     b.salvar(&caminho)?;
     println!(
         "baseline: {} violações congeladas em {} regras ({})",
@@ -288,7 +341,7 @@ fn linha_arquitetura(rel: &Relatorio) -> String {
     )
 }
 
-fn init(raiz: &Path, forcar: bool) -> Result<()> {
+fn init(raiz: &Path, forcar: bool, ia: Option<AgenteArg>) -> Result<()> {
     let caminho_cfg = raiz.join(config::ARQUIVO);
     if caminho_cfg.exists() && !forcar {
         bail!(
@@ -313,7 +366,8 @@ fn init(raiz: &Path, forcar: bool) -> Result<()> {
     };
     let base = rel.projeto.base.clone().unwrap_or_default();
     let yml = format!(
-        "# gerado por guarda init {} — edite à vontade; só o que difere do padrão precisa estar aqui\n\
+        "# yaml-language-server: $schema=./{}\n\
+         # gerado por guarda init {} — edite à vontade; só o que difere do padrão precisa estar aqui\n\
          versao: 1\n\
          perfil: recomendado\n\
          \n\
@@ -324,15 +378,25 @@ fn init(raiz: &Path, forcar: bool) -> Result<()> {
          limites:\n  linhas-funcao: 60\n  complexidade-cognitiva: 15\n\
          \n\
          gate:\n  falhar-em: erro\n  baseline: .guarda/baseline.json\n  supressao: exigir-motivo\n",
+        config::ARQUIVO_SCHEMA,
         env!("CARGO_PKG_VERSION")
     );
     let cfg = Config::de_texto(&yml).context("guarda.yml gerado é inválido (bug)")?;
     std::fs::write(&caminho_cfg, &yml)?;
+    integracao::gravar_schema(raiz)?;
 
     // Com o preset e a base fixados, a análise é a mesma que o check vai fazer.
     let rel = motor::executar(raiz, &cfg, &Escopo::Tudo)?;
     let b = Baseline::de_violacoes(&rel.violacoes);
-    b.salvar(&caminho_baseline(raiz, &cfg))?;
+    b.salvar(&gate::caminho_baseline(raiz, &cfg))?;
+    let mut escritos = vec![
+        "guarda.yml".to_string(),
+        cfg.gate.baseline.clone(),
+        config::ARQUIVO_SCHEMA.to_string(),
+    ];
+    if let Some(agente) = ia {
+        escritos.extend(integracao::integrar(raiz, &cfg, agente.into())?);
+    }
 
     let erros_parse = rel.analises.iter().filter(|a| a.erro_parse).count();
     println!(
@@ -351,8 +415,8 @@ fn init(raiz: &Path, forcar: bool) -> Result<()> {
         None => println!("cobertura: nem JaCoCo nem Kover no build"),
     }
     println!(
-        "escrito: guarda.yml, {} · {}",
-        cfg.gate.baseline,
+        "escrito: {} · {}",
+        escritos.join(", "),
         saida::segundos(rel.tempo)
     );
     Ok(())
@@ -361,8 +425,11 @@ fn init(raiz: &Path, forcar: bool) -> Result<()> {
 fn medir(raiz: &Path) -> Result<()> {
     let cfg = Config::carregar(raiz)?;
     // A primeira execução paga disco frio e antivírus; o portão vale para o uso contínuo.
-    let frio = motor::executar(raiz, &cfg, &Escopo::Tudo)?.tempo;
-    let rel = motor::executar(raiz, &cfg, &Escopo::Tudo)?;
+    // Sem cache mede o parser de verdade; com cache, o que a IA sente a cada edição.
+    let frio = motor::executar_com(raiz, &cfg, &Escopo::Tudo, false)?.tempo;
+    let rel = motor::executar_com(raiz, &cfg, &Escopo::Tudo, false)?;
+    motor::executar(raiz, &cfg, &Escopo::Tudo)?;
+    let com_cache = motor::executar(raiz, &cfg, &Escopo::Tudo)?.tempo;
     let total = rel.analises.len();
     let linguagens = contar_linguagens(&rel);
     let linhas: usize = rel.analises.iter().map(|a| a.linhas).sum();
@@ -386,9 +453,10 @@ fn medir(raiz: &Path) -> Result<()> {
         }
     }
     println!(
-        "tempo: {} total (a frio {}) · {:.2} ms/arquivo em média · mais lento {:.1} ms ({})",
+        "tempo: {} sem cache (a frio {}) · {} com cache · {:.2} ms/arquivo em média · mais lento {:.1} ms ({})",
         saida::segundos(rel.tempo),
         saida::segundos(frio),
+        saida::segundos(com_cache),
         if total == 0 {
             0.0
         } else {

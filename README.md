@@ -8,20 +8,54 @@ O problema que resolve: a IA trata skill e baseline como sugestão e foge do pad
 só reprova depois do push. A `guarda` é o portão objetivo que a IA precisa passar antes de
 terminar uma tarefa: mesmo código + mesmo `guarda.yml` + mesma versão = mesmo resultado.
 
-> Status: **Fase 0 (prova de conceito)**. Ver [docs/fase-0.md](docs/fase-0.md) e o
-> [roadmap](#roadmap).
+> Status: **Fase 1 (MVP para a IA)**, aguardando o portão de uma semana de uso real.
+> Ver [docs/fase-0.md](docs/fase-0.md), [docs/fase-1.md](docs/fase-1.md) e o [roadmap](#roadmap).
+
+## Instalação
+
+```bash
+cargo install --path .      # põe `guarda` no PATH (os hooks chamam pelo nome)
+```
 
 ## Uso
 
 ```bash
-guarda init [raiz]          # detecta a arquitetura, escreve guarda.yml e congela o legado
-guarda check [raiz]         # verifica e aplica o gate (exit 1 se houver violação nova)
-guarda check --arquivos A B # só esses arquivos (arquitetura continua valendo pelo índice)
-guarda check --alterados    # só o que mudou contra HEAD, incluindo arquivos novos
-guarda check --formato json # um objeto JSON por linha
-guarda baseline gerar       # regrava o baseline (decisão humana: congela dívida nova)
-guarda medir [raiz]         # parse, tempo e violações por regra (portão da Fase 0)
+guarda init [raiz]             # detecta a arquitetura, escreve guarda.yml, schema e baseline
+guarda init --ia claude        # ... e integra com o Claude Code (CLAUDE.md + hooks)
+guarda check [raiz]            # verifica e aplica o gate (exit 1 se houver violação nova)
+guarda check --arquivos A B    # só esses arquivos (arquitetura vale pelo índice em cache)
+guarda check --alterados       # só o que mudou contra HEAD, incluindo arquivos novos
+guarda check --formato json    # um objeto JSON por linha
+guarda check --atualizar-baseline  # tira o que foi corrigido; nunca acrescenta
+guarda baseline gerar          # regrava o baseline (decisão humana: congela dívida nova)
+guarda contexto                # as regras do projeto em ~12 linhas, para o prompt da IA
+guarda integrar claude|agents  # contexto no CLAUDE.md/AGENTS.md (+ hooks, no Claude Code)
+guarda schema                  # JSON Schema do guarda.yml
+guarda medir [raiz]            # parse, tempo e violações por regra
 ```
+
+## Integração com o Claude Code
+
+`guarda integrar claude` (ou `init --ia claude`) acrescenta ao `.claude/settings.json`, sem
+mexer no resto:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [{ "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash|PowerShell",
+      "hooks": [{ "type": "command", "command": "guarda hook proteger", "timeout": 10 }] }],
+    "PostToolUse": [{ "matcher": "Edit|Write|MultiEdit",
+      "hooks": [{ "type": "command", "command": "guarda hook pos-edicao", "timeout": 30 }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "guarda hook final", "timeout": 120 }] }]
+  }
+}
+```
+
+- **proteger**: a IA não edita `guarda.yml`, `.guarda/`, o plugin de cobertura do build nem
+  os hooks, e não roda `guarda baseline`/`guarda init`.
+- **pos-edicao**: verifica o arquivo recém-editado; violação nova volta para a IA na hora.
+- **final**: antes de encerrar, verifica o que mudou; segura a IA até 3 vezes
+  (`gate.tentativas-final`) e depois libera, deixando o relatório em `.guarda/cache/final.txt`.
 
 Saída compacta (o tempo é a única parte não determinística):
 
@@ -36,7 +70,7 @@ src/main/kotlin/com/empresa/icms/domain/Nota.kt
 
 Tudo certo é uma linha só: `✓ guarda 0 erros · baseline 412 · 0,04s`.
 
-## Regras da Fase 0
+## Regras
 
 | Código | Regra | Origem | Padrão |
 | --- | --- | --- | --- |
@@ -46,6 +80,7 @@ Tudo certo é uma linha só: `✓ guarda 0 erros · baseline 412 · 0,04s`.
 | CPX005 | Função longa (linhas de código, sem brancos e comentários) | detekt LongMethod | > 60 |
 | KT001 | Uso de `!!` | detekt UnsafeCallOnNullableType | erro |
 | SUP001 | `@Suppress`/`@SuppressWarnings` ou `guarda:ignorar` sem motivo | política da guarda | erro |
+| GRD001 | `guarda.yml` ou baseline alterado no diff (só em `--alterados`) | política da guarda | aviso |
 
 Supressão pontual, sempre com motivo (vale para a linha do comentário e a seguinte):
 
@@ -77,6 +112,7 @@ regras:
 gate:
   falhar-em: erro            # erro | aviso
   baseline: .guarda/baseline.json
+  tentativas-final: 3        # quantas vezes o hook final segura a IA
 ```
 
 As seções `cobertura`, `duplicacao`, `estende`, `perfil`, `regras.proibir` e
@@ -96,11 +132,14 @@ As seções `cobertura`, `duplicacao`, `estende`, `perfil`, `regras.proibir` e
   normalizado (sem número de linha). Regras de limite (CPX001, CPX005) usam catraca: o valor
   pode cair, nunca subir. `check --atualizar-baseline` só remove; crescer exige
   `baseline gerar`.
+- **Cache**: `.guarda/cache/` guarda o resultado das regras por arquivo, indexado por
+  tamanho, data e hash do conteúdo; a chave inclui a versão e os limites, então o cache
+  nunca muda o resultado. Também serve de índice do projeto no modo `--arquivos`.
 
 ## Desenvolvimento
 
 ```bash
-cargo test                                  # unitários + ponta a ponta (tests/cli.rs)
+cargo test                                  # unitários + ponta a ponta (tests/*.rs)
 cargo run -- arvore caminho/Arquivo.kt      # imprime a árvore sintática (para escrever regras)
 cargo build --release
 ```

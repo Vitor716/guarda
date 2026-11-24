@@ -58,7 +58,19 @@ impl Padrao {
     }
 
     /// Profundidade (em segmentos) onde o padrão casou; `None` se não casou.
+    #[cfg(test)]
     fn casar(&self, completo: &str, relativo: &str, profundidade_base: usize) -> Option<usize> {
+        self.casar_com_tamanho(completo, relativo, profundidade_base)
+            .map(|(d, _)| d)
+    }
+
+    /// Profundidade onde o padrão casou e quantos segmentos o trecho casado ocupa.
+    fn casar_com_tamanho(
+        &self,
+        completo: &str,
+        relativo: &str,
+        profundidade_base: usize,
+    ) -> Option<(usize, usize)> {
         let (alvo, desloc) = if self.relativo {
             (relativo, profundidade_base)
         } else {
@@ -68,8 +80,11 @@ impl Padrao {
             return None;
         }
         let cap = self.re.captures(alvo)?;
-        let ini = cap.name("n")?.start();
-        Some(desloc + alvo[..ini].matches('.').count())
+        let n = cap.name("n")?;
+        Some((
+            desloc + alvo[..n.start()].matches('.').count(),
+            n.as_str().matches('.').count() + 1,
+        ))
     }
 }
 
@@ -151,18 +166,27 @@ pub fn prefixo_comum(pacotes: &HashSet<String>) -> Option<String> {
 impl Arquitetura {
     /// Camada do pacote: a do padrão que casa mais perto da raiz; empate → ordem de declaração.
     pub fn camada_de(&self, pacote: &str, projeto: &Projeto) -> Option<&str> {
+        self.camada_com_pasta(pacote, projeto).map(|(c, _)| c)
+    }
+
+    /// Camada do pacote e o prefixo do pacote que decidiu a camada (`...domain`,
+    /// `...adapter.in`): é a "pasta" da camada, usada no `guarda contexto`.
+    pub fn camada_com_pasta(&self, pacote: &str, projeto: &Projeto) -> Option<(&str, String)> {
         let rel = projeto.relativo(pacote);
         let base = projeto.profundidade_base();
-        let mut melhor: Option<(usize, &str)> = None;
+        let mut melhor: Option<(usize, usize, &str)> = None;
         for c in &self.camadas {
             for p in &c.padroes {
-                if let Some(d) = p.casar(pacote, rel, base)
-                    && melhor.is_none_or(|(md, _)| d < md) {
-                        melhor = Some((d, &c.nome));
-                    }
+                if let Some((d, n)) = p.casar_com_tamanho(pacote, rel, base)
+                    && melhor.is_none_or(|(md, _, _)| d < md)
+                {
+                    melhor = Some((d, n, &c.nome));
+                }
             }
         }
-        melhor.map(|(_, n)| n)
+        let (d, n, nome) = melhor?;
+        let pasta: Vec<&str> = pacote.split('.').take(d + n).collect();
+        Some((nome, pasta.join(".")))
     }
 
     pub fn permitido(&self, de: &str, para: &str) -> bool {

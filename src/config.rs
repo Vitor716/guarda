@@ -4,33 +4,52 @@
 //! duplicação, proibir, personalizadas) são aceitas para o arquivo já poder ser
 //! escrito no formato final, mas ignoradas nesta fase.
 
-use anyhow::{Result, bail};
+use crate::modelo::Severidade;
+use anyhow::Result;
 use indexmap::IndexMap;
+use schemars::JsonSchema;
 use serde::Deserialize;
 use std::path::Path;
 
 pub const ARQUIVO: &str = "guarda.yml";
+/// Onde o `init` grava o JSON Schema, referenciado na primeira linha do guarda.yml.
+pub const ARQUIVO_SCHEMA: &str = ".guarda/guarda.schema.json";
 
-#[derive(Debug, Deserialize, Default)]
+/// Configuração da guarda. Tudo é opcional: o que não for declarado herda o perfil recomendado.
+#[derive(Debug, Deserialize, Default, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields, default)]
+#[schemars(title = "guarda.yml")]
 pub struct Config {
+    /// Versão do formato do arquivo.
     pub versao: Option<u32>,
+    /// Arquivo base a importar (ainda sem efeito: Fase 3).
+    #[schemars(with = "Option<serde_json::Value>")]
     pub estende: Option<serde_yaml::Value>,
+    /// Perfil de limites (ainda sem efeito: hoje vale sempre o recomendado).
+    #[schemars(extend("enum" = ["minimo", "recomendado", "rigoroso"]))]
     pub perfil: Option<String>,
     pub fontes: Fontes,
     pub arquitetura: Arquitetura,
     pub limites: Limites,
     pub regras: Regras,
+    /// Cobertura de código (ainda sem efeito: Fase 2).
+    #[schemars(with = "Option<serde_json::Value>")]
     pub cobertura: Option<serde_yaml::Value>,
+    /// Duplicação de código (ainda sem efeito: Fase 2).
+    #[schemars(with = "Option<serde_json::Value>")]
     pub duplicacao: Option<serde_yaml::Value>,
     pub gate: Gate,
 }
 
-#[derive(Debug, Deserialize)]
+/// Quais arquivos entram na análise (globs relativos à raiz).
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields, default)]
 pub struct Fontes {
+    /// Código de produção: é o que a guarda analisa.
     pub producao: Vec<String>,
+    /// Código de teste (regras de teste chegam na Fase 3).
     pub testes: Vec<String>,
+    /// Nunca analisados.
     pub ignorar: Vec<String>,
 }
 
@@ -49,10 +68,12 @@ impl Default for Fontes {
     }
 }
 
-#[derive(Debug, Deserialize)]
+/// Camadas e dependências permitidas entre elas (regra ARQ001).
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields, default)]
 pub struct Arquitetura {
-    /// `auto` | `layered` | `clean` | `hexagonal` | `nenhum`
+    /// `auto` detecta pelo nome dos pacotes; `nenhum` exige declarar camadas e `permitidas`.
+    #[schemars(extend("enum" = ["auto", "hexagonal", "clean", "layered", "nenhum"]))]
     pub preset: String,
     /// Pacote base do projeto. Sem ele, é o prefixo comum dos pacotes declarados.
     pub base: Option<String>,
@@ -62,6 +83,7 @@ pub struct Arquitetura {
     pub excecoes: Vec<String>,
     /// Arestas permitidas para camadas declaradas à mão (preset `nenhum`).
     pub permitidas: Vec<String>,
+    /// Ciclos entre pacotes (ainda sem efeito: Fase 3).
     pub ciclos: Option<String>,
 }
 
@@ -78,11 +100,15 @@ impl Default for Arquitetura {
     }
 }
 
-#[derive(Debug, Deserialize)]
+/// Limites das regras de tamanho e complexidade.
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields, default)]
 pub struct Limites {
+    /// CPX005: linhas de código por função (sem brancos e comentários).
     pub linhas_funcao: u32,
+    /// CPX001: complexidade cognitiva por função (Sonar S3776).
     pub complexidade_cognitiva: u32,
+    /// Ainda sem efeito (Fase 3).
     pub linhas_classe: Option<u32>,
     pub parametros: Option<u32>,
     pub aninhamento: Option<u32>,
@@ -101,33 +127,52 @@ impl Default for Limites {
     }
 }
 
-#[derive(Debug, Deserialize, Default)]
+/// Liga, desliga e ajusta regras pelo código (ARQ001, KT001...).
+#[derive(Debug, Deserialize, Default, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields, default)]
 pub struct Regras {
+    /// Códigos de regra desligados.
     pub desligar: Vec<String>,
-    pub severidade: IndexMap<String, String>,
+    /// Severidade por código de regra.
+    pub severidade: IndexMap<String, Severidade>,
+    /// Imports e tipos proibidos (ainda sem efeito: Fase 3).
+    #[schemars(with = "Option<serde_json::Value>")]
     pub proibir: Option<serde_yaml::Value>,
+    /// Pasta de regras extras em YAML (ainda sem efeito: Fase 3).
+    #[schemars(with = "Option<serde_json::Value>")]
     pub personalizadas: Option<serde_yaml::Value>,
 }
 
-#[derive(Debug, Deserialize)]
+/// O que reprova a verificação.
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields, default)]
 pub struct Gate {
-    /// `erro` | `aviso`
-    pub falhar_em: String,
+    /// Severidade mínima que reprova.
+    pub falhar_em: Severidade,
+    /// Caminho do baseline, relativo à raiz.
     pub baseline: String,
-    /// `proibida` | `exigir-motivo` | `livre` (só `exigir-motivo` nesta fase)
+    /// Política de supressão (só `exigir-motivo` tem efeito nesta fase).
+    #[schemars(extend("enum" = ["proibida", "exigir-motivo", "livre"]))]
     pub supressao: String,
+    /// Quantas vezes o hook `final` segura a IA antes de liberar e deixar o relatório.
+    pub tentativas_final: u32,
 }
 
 impl Default for Gate {
     fn default() -> Self {
         Self {
-            falhar_em: "erro".into(),
+            falhar_em: Severidade::Erro,
             baseline: ".guarda/baseline.json".into(),
             supressao: "exigir-motivo".into(),
+            tentativas_final: 3,
         }
     }
+}
+
+/// JSON Schema do guarda.yml (autocomplete e validação no editor e na IA).
+pub fn schema() -> String {
+    let s = schemars::schema_for!(Config);
+    serde_json::to_string_pretty(&s).expect("schema serializável") + "\n"
 }
 
 impl Config {
@@ -144,24 +189,20 @@ impl Config {
         if texto.trim().is_empty() {
             return Ok(Self::default());
         }
-        let cfg: Self = serde_yaml::from_str(texto).map_err(|e| {
+        serde_yaml::from_str(texto).map_err(|e| {
             let linha = e.location().map(|l| l.line()).unwrap_or(0);
             anyhow::anyhow!("{ARQUIVO}:{linha} {e}")
-        })?;
-        cfg.validar()?;
-        Ok(cfg)
+        })
     }
 
-    fn validar(&self) -> Result<()> {
-        for (codigo, sev) in &self.regras.severidade {
-            if crate::modelo::Severidade::de_texto(sev).is_none() {
-                bail!("{ARQUIVO} regras.severidade.{codigo}: esperado erro ou aviso, veio {sev:?}");
-            }
-        }
-        if !matches!(self.gate.falhar_em.as_str(), "erro" | "aviso") {
-            bail!("{ARQUIVO} gate.falhar-em: esperado erro ou aviso");
-        }
-        Ok(())
+    /// Impressão digital do que muda o resultado das regras por arquivo (para o cache).
+    pub fn impressao_regras(&self) -> String {
+        format!(
+            "{}|{}|{}",
+            env!("CARGO_PKG_VERSION"),
+            self.limites.linhas_funcao,
+            self.limites.complexidade_cognitiva
+        )
     }
 }
 

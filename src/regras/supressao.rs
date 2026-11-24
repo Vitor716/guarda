@@ -8,7 +8,7 @@ use tree_sitter::Node;
 const DIRETIVA: &str = "guarda:ignorar";
 
 /// Diretiva válida: ignora os códigos na linha do comentário e na seguinte.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Supressao {
     pub linha: usize,
     pub codigos: Vec<String>,

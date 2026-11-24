@@ -1,41 +1,8 @@
 //! Testes de ponta a ponta: roda o binário sobre uma cópia de `tests/fixtures/hex`.
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
+mod comum;
 
-fn guarda(raiz: &Path, args: &[&str]) -> (i32, String) {
-    let out = Command::new(env!("CARGO_BIN_EXE_guarda"))
-        .args(args)
-        .current_dir(raiz)
-        .output()
-        .unwrap();
-    let mut s = String::from_utf8_lossy(&out.stdout).to_string();
-    s.push_str(&String::from_utf8_lossy(&out.stderr));
-    (out.status.code().unwrap_or(-1), s)
-}
-
-/// Copia o projeto de exemplo para um diretório temporário (o init escreve arquivos).
-fn projeto() -> tempfile::TempDir {
-    let dir = tempfile::tempdir().unwrap();
-    copiar(
-        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/hex"),
-        dir.path(),
-    );
-    dir
-}
-
-fn copiar(de: &Path, para: &Path) {
-    std::fs::create_dir_all(para).unwrap();
-    for e in std::fs::read_dir(de).unwrap() {
-        let e = e.unwrap();
-        let destino = para.join(e.file_name());
-        if e.file_type().unwrap().is_dir() {
-            copiar(&e.path(), &destino);
-        } else {
-            std::fs::copy(e.path(), destino).unwrap();
-        }
-    }
-}
+use comum::{guarda, projeto};
 
 /// Tira o tempo do rodapé, a única parte não determinística da saída.
 fn sem_tempo(s: &str) -> String {

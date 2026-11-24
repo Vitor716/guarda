@@ -1,22 +1,15 @@
 //! Tipos centrais: violação, severidade e o catálogo de regras implementadas.
 
-use serde::Serialize;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Severidade {
     Erro,
     Aviso,
-}
-
-impl Severidade {
-    pub fn de_texto(s: &str) -> Option<Self> {
-        match s {
-            "erro" => Some(Self::Erro),
-            "aviso" => Some(Self::Aviso),
-            _ => None,
-        }
-    }
 }
 
 pub struct Regra {
@@ -63,6 +56,12 @@ pub const REGRAS: &[Regra] = &[
         codigo: "SUP001",
         nome: "supressão sem motivo",
         severidade: Severidade::Erro,
+        catraca: false,
+    },
+    Regra {
+        codigo: "GRD001",
+        nome: "guarda.yml ou baseline alterado (revisão humana)",
+        severidade: Severidade::Aviso,
         catraca: false,
     },
 ];

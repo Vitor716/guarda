@@ -1,14 +1,12 @@
 //! Varredura de arquivos (crate `ignore`, a mesma do ripgrep: respeita .gitignore).
 
 use crate::config::Fontes;
-use crate::lang::{Import, Linguagem, caminho_do_import, resolver_import};
+use crate::lang::Linguagem;
 use anyhow::{Context, Result};
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use ignore::WalkBuilder;
-use regex::Regex;
 use std::path::Path;
 use std::process::Command;
-use std::sync::LazyLock;
 
 fn globs(padroes: &[String]) -> Result<GlobSet> {
     let mut b = GlobSetBuilder::new();
@@ -104,44 +102,4 @@ pub fn alterados(raiz: &Path) -> Result<Vec<String>> {
     v.sort();
     v.dedup();
     Ok(v)
-}
-
-static RE_PACOTE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\s*package\s+([\w.]+)").expect("regex"));
-static RE_IMPORT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\s*import\s+(?:static\s+)?([\w.]+(?:\.\*)?)").expect("regex"));
-
-/// Índice rápido, sem parser: pacote e imports de cada arquivo, lidos por regex.
-/// Usado no modo `--arquivos`, quando o resto do projeto não é analisado.
-pub fn indice_rapido(
-    raiz: &Path,
-    arquivos: &[String],
-) -> Vec<(String, Option<String>, Vec<Import>)> {
-    use rayon::prelude::*;
-    arquivos
-        .par_iter()
-        .map(|rel| {
-            let fonte = std::fs::read_to_string(raiz.join(rel)).unwrap_or_default();
-            let mut pacote = None;
-            let mut imports = Vec::new();
-            for (i, l) in fonte.lines().enumerate() {
-                if pacote.is_none()
-                    && let Some(c) = RE_PACOTE.captures(l) {
-                        pacote = Some(c[1].to_string());
-                        continue;
-                    }
-                if let Some(c) = RE_IMPORT.captures(l) {
-                    let (caminho, curinga) = caminho_do_import(&format!("import {}", &c[1]));
-                    let (pkg, nome) = resolver_import(&caminho, curinga);
-                    imports.push(Import {
-                        pacote: pkg,
-                        nome,
-                        linha: i + 1,
-                        texto: l.trim().to_string(),
-                    });
-                }
-            }
-            (rel.clone(), pacote, imports)
-        })
-        .collect()
 }

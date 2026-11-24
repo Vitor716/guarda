@@ -182,7 +182,7 @@ pub fn pacote(raiz: Node, fonte: &str) -> Option<String> {
     None
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Import {
     /// Pacote do que foi importado (`a.b` em `import a.b.C`).
     pub pacote: String,

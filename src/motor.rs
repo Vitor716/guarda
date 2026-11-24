@@ -1,11 +1,12 @@
-//! Motor: lê cada arquivo uma vez, roda as regras por arquivo em paralelo, monta o índice
-//! do projeto e roda as regras de projeto (arquitetura). Resultado sempre ordenado.
+//! Motor: lê cada arquivo uma vez (ou tira do cache), roda as regras por arquivo em paralelo,
+//! monta o índice do projeto e roda as regras de projeto (arquitetura). Resultado ordenado.
 
 use crate::arquitetura::{self, Arquitetura, ArquivoIndice, Pontuacao, Projeto};
+use crate::cache::{self, Cache, Dados, Entrada, ViolacaoSalva};
 use crate::config::Config;
 use crate::descoberta;
 use crate::lang::{self, Import, Linguagem, Parsers};
-use crate::modelo::{Severidade, Violacao};
+use crate::modelo::Violacao;
 use crate::regras::{self, Contexto, Supressao};
 use anyhow::Result;
 use rayon::prelude::*;
@@ -23,35 +24,58 @@ pub struct Analise {
     pub erro_parse: bool,
     pub linhas: usize,
     pub tempo: Duration,
+    /// Veio do cache, sem passar pelo parser.
+    pub do_cache: bool,
 }
 
-pub fn analisar_arquivo(parsers: &mut Parsers, raiz: &Path, rel: &str, cfg: &Config) -> Analise {
-    let inicio = Instant::now();
-    let ling = Linguagem::do_caminho(rel).expect("só .java e .kt chegam aqui");
-    let mut a = Analise {
-        arquivo: rel.to_string(),
-        ling,
-        pacote: None,
-        imports: Vec::new(),
-        violacoes: Vec::new(),
-        supressoes: Vec::new(),
-        erro_parse: false,
-        linhas: 0,
-        tempo: Duration::ZERO,
-    };
-    let bruto = match std::fs::read(raiz.join(rel)) {
-        Ok(b) => b,
-        Err(e) => {
-            a.erro_parse = true;
-            a.violacoes
-                .push(err000(rel, 1, &format!("não consegui ler o arquivo: {e}")));
-            return a;
+impl Analise {
+    fn vazia(rel: &str) -> Self {
+        Self {
+            arquivo: rel.to_string(),
+            ling: Linguagem::do_caminho(rel).expect("só .java e .kt chegam aqui"),
+            pacote: None,
+            imports: Vec::new(),
+            violacoes: Vec::new(),
+            supressoes: Vec::new(),
+            erro_parse: false,
+            linhas: 0,
+            tempo: Duration::ZERO,
+            do_cache: false,
         }
-    };
-    let fonte = String::from_utf8_lossy(&bruto);
+    }
+
+    fn de_cache(rel: &str, d: &Dados) -> Self {
+        let mut a = Self::vazia(rel);
+        a.pacote = d.pacote.clone();
+        a.imports = d.imports.clone();
+        a.violacoes = d.violacoes.iter().filter_map(|v| v.para(rel)).collect();
+        a.supressoes = d.supressoes.clone();
+        a.erro_parse = d.erro_parse;
+        a.linhas = d.linhas;
+        a.do_cache = true;
+        a
+    }
+
+    fn dados(&self) -> Dados {
+        Dados {
+            pacote: self.pacote.clone(),
+            imports: self.imports.clone(),
+            violacoes: self.violacoes.iter().map(ViolacaoSalva::de).collect(),
+            supressoes: self.supressoes.clone(),
+            erro_parse: self.erro_parse,
+            linhas: self.linhas,
+        }
+    }
+}
+
+/// Roda as regras por arquivo sobre o conteúdo já lido.
+pub fn analisar_fonte(parsers: &mut Parsers, rel: &str, bruto: &[u8], cfg: &Config) -> Analise {
+    let inicio = Instant::now();
+    let mut a = Analise::vazia(rel);
+    let fonte = String::from_utf8_lossy(bruto);
     let fonte = fonte.strip_prefix('\u{feff}').unwrap_or(&fonte);
     a.linhas = fonte.lines().count();
-    let Some(arvore) = parsers.ler(ling, fonte) else {
+    let Some(arvore) = parsers.ler(a.ling, fonte) else {
         a.erro_parse = true;
         a.violacoes
             .push(err000(rel, 1, "o parser não devolveu árvore"));
@@ -82,7 +106,7 @@ pub fn analisar_arquivo(parsers: &mut Parsers, raiz: &Path, rel: &str, cfg: &Con
         let ctx = Contexto {
             arquivo: rel,
             fonte,
-            ling,
+            ling: a.ling,
             raiz: raiz_no,
             limites: &cfg.limites,
         };
@@ -92,6 +116,56 @@ pub fn analisar_arquivo(parsers: &mut Parsers, raiz: &Path, rel: &str, cfg: &Con
     }
     a.tempo = inicio.elapsed();
     a
+}
+
+/// Resultado de um arquivo: do cache se o conteúdo não mudou, senão do parser.
+/// Devolve também a entrada nova do cache, quando houver.
+fn obter(
+    parsers: &mut Parsers,
+    raiz: &Path,
+    rel: &str,
+    cfg: &Config,
+    c: &Cache,
+) -> (Analise, Option<Entrada>) {
+    let caminho = raiz.join(rel);
+    let assinatura = cache::assinatura(&caminho);
+    let anterior = c.get(rel);
+    if let (Some(e), Some((t, m))) = (anterior, assinatura)
+        && e.tamanho == t
+        && e.modificado_ns == m
+    {
+        return (Analise::de_cache(rel, &e.dados), None);
+    }
+    let bruto = match std::fs::read(&caminho) {
+        Ok(b) => b,
+        Err(e) => {
+            let mut a = Analise::vazia(rel);
+            a.erro_parse = true;
+            a.violacoes
+                .push(err000(rel, 1, &format!("não consegui ler o arquivo: {e}")));
+            return (a, None);
+        }
+    };
+    let (tamanho, modificado_ns) = assinatura.unwrap_or((bruto.len() as u64, 0));
+    let hash = cache::hash(&bruto);
+    if let Some(e) = anterior.filter(|e| e.hash == hash) {
+        // Só a data mudou (checkout, touch): mesmo resultado.
+        let nova = Entrada {
+            tamanho,
+            modificado_ns,
+            hash,
+            dados: e.dados.clone(),
+        };
+        return (Analise::de_cache(rel, &e.dados), Some(nova));
+    }
+    let a = analisar_fonte(parsers, rel, &bruto, cfg);
+    let nova = c.ligado().then(|| Entrada {
+        tamanho,
+        modificado_ns,
+        hash,
+        dados: a.dados(),
+    });
+    (a, nova)
 }
 
 fn err000(arquivo: &str, linha: usize, msg: &str) -> Violacao {
@@ -122,6 +196,7 @@ pub enum Origem {
 
 pub struct Relatorio {
     pub violacoes: Vec<Violacao>,
+    /// Só os arquivos do escopo pedido.
     pub analises: Vec<Analise>,
     pub arquitetura: Option<Arquitetura>,
     pub origem: Origem,
@@ -141,48 +216,58 @@ impl Relatorio {
 }
 
 pub fn executar(raiz: &Path, cfg: &Config, escopo: &Escopo) -> Result<Relatorio> {
+    executar_com(raiz, cfg, escopo, true)
+}
+
+pub fn executar_com(
+    raiz: &Path,
+    cfg: &Config,
+    escopo: &Escopo,
+    usar_cache: bool,
+) -> Result<Relatorio> {
     let inicio = Instant::now();
     let todos = descoberta::listar(raiz, &cfg.fontes)?;
-    let alvo: Vec<String> = match escopo {
-        Escopo::Tudo => todos.clone(),
+    let alvo: HashSet<&str> = match escopo {
+        Escopo::Tudo => todos.iter().map(String::as_str).collect(),
         Escopo::Arquivos(lista) => {
-            let quero: HashSet<&String> = lista.iter().collect();
+            let quero: HashSet<&str> = lista.iter().map(String::as_str).collect();
             todos
                 .iter()
+                .map(String::as_str)
                 .filter(|r| quero.contains(r))
-                .cloned()
                 .collect()
         }
     };
 
-    let analises: Vec<Analise> = alvo
+    // O projeto inteiro passa pelo cache: é o índice que mantém a arquitetura valendo
+    // mesmo quando só um arquivo é verificado.
+    let mut c = if usar_cache {
+        Cache::carregar(raiz, &cfg.impressao_regras())
+    } else {
+        Cache::desligado()
+    };
+    let resultados: Vec<(Analise, Option<Entrada>)> = todos
         .par_iter()
-        .map_init(Parsers::novo, |p, rel| analisar_arquivo(p, raiz, rel, cfg))
+        .map_init(Parsers::novo, |p, rel| obter(p, raiz, rel, cfg, &c))
         .collect();
-
-    // Índice do projeto: no modo parcial, o resto do projeto entra pelo índice rápido.
-    let rapido;
-    let indice: Vec<ArquivoIndice> = match escopo {
-        Escopo::Tudo => analises
-            .iter()
-            .map(|a| ArquivoIndice {
-                arquivo: &a.arquivo,
-                pacote: a.pacote.as_deref(),
-                imports: &a.imports,
-            })
-            .collect(),
-        Escopo::Arquivos(_) => {
-            rapido = descoberta::indice_rapido(raiz, &todos);
-            rapido
-                .iter()
-                .map(|(r, p, i)| ArquivoIndice {
-                    arquivo: r,
-                    pacote: p.as_deref(),
-                    imports: i,
-                })
-                .collect()
+    let mut todas = Vec::with_capacity(resultados.len());
+    for (a, nova) in resultados {
+        if let Some(e) = nova {
+            c.guardar(a.arquivo.clone(), e);
         }
-    };
+        todas.push(a);
+    }
+    c.manter_so(&todos.iter().map(String::as_str).collect());
+    c.salvar();
+
+    let indice: Vec<ArquivoIndice> = todas
+        .iter()
+        .map(|a| ArquivoIndice {
+            arquivo: &a.arquivo,
+            pacote: a.pacote.as_deref(),
+            imports: &a.imports,
+        })
+        .collect();
     let pacotes: HashSet<String> = indice
         .iter()
         .filter_map(|a| a.pacote.map(str::to_string))
@@ -200,6 +285,10 @@ pub fn executar(raiz: &Path, cfg: &Config, escopo: &Escopo) -> Result<Relatorio>
         },
     };
 
+    let analises: Vec<Analise> = todas
+        .into_iter()
+        .filter(|a| alvo.contains(a.arquivo.as_str()))
+        .collect();
     let mut violacoes: Vec<Violacao> = Vec::new();
     for a in &analises {
         violacoes.extend(a.violacoes.iter().cloned());
@@ -230,13 +319,8 @@ pub fn executar(raiz: &Path, cfg: &Config, escopo: &Escopo) -> Result<Relatorio>
                 .is_some_and(|ss| ss.iter().any(|s| s.cobre(v.codigo, v.linha)))
     });
     for v in &mut violacoes {
-        if let Some(s) = cfg
-            .regras
-            .severidade
-            .get(v.codigo)
-            .and_then(|s| Severidade::de_texto(s))
-        {
-            v.severidade = s;
+        if let Some(s) = cfg.regras.severidade.get(v.codigo) {
+            v.severidade = *s;
         }
     }
     violacoes.sort_by(|a, b| a.chave_ordem().cmp(&b.chave_ordem()));
