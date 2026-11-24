@@ -121,6 +121,9 @@ Testado de verdade (não só nos testes do repositório):
   (encontrou vazamento real do header `Authorization` na l.73 do `JwtAutenticacaoFilter.java`).
 - **`SEC012` (rota liberada)**: `requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()` (preflight
   CORS) não gera mais falso positivo.
+- **`SEC020` (open redirect)**: `"redirect:/rota-fixa/" + id` fica travado no mesmo host e não
+  gera mais falso positivo (validado no `spring-projects/spring-petclinic`); `"redirect:" + url`,
+  `"redirect:/" + path` e `"redirect:https://" + host` continuam sendo cobrados.
 - **`SEC017` (configuração insegura)**: ampliada para `server.error.include-stacktrace: on_param`/`on-param`,
   `server.error.include-exception: true`, `management.endpoint.health.show-details: always`,
   `spring.h2.console.enabled: true` e exposição explícita de endpoints sensíveis do Actuator

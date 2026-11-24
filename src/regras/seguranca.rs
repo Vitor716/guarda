@@ -1191,6 +1191,16 @@ fn sorvedouro(c: &Chamada, r: &str) -> Option<&'static str> {
     None
 }
 
+/// Prefixo `"redirect:..."` que ainda permite trocar de host (open redirect):
+/// `"redirect:"`, `"redirect:/"` (vira `//evil.com`), `"redirect://..."` ou esquema `http(s)://`.
+/// Caminho relativo com segmento fixo (`"redirect:/owners/" + id`) fica travado no mesmo host.
+fn redirect_aberto(prefixo: &str) -> bool {
+    let Some(resto) = prefixo.strip_prefix("redirect:") else {
+        return false;
+    };
+    resto.is_empty() || resto == "/" || resto.starts_with("//") || resto.contains("://")
+}
+
 fn entrada_do_request(a: &mut Achados, f: Node) {
     let fonte = a.ctx.fonte;
     let Some(corpo) = lang::corpo_da_funcao(f) else {
@@ -1232,7 +1242,7 @@ fn entrada_do_request(a: &mut Achados, f: Node) {
                 .and_then(|x| conteudo(x, fonte))
         {
             let dir = n.child_by_field_name("right");
-            if esq.starts_with("redirect:") && dir.is_some_and(|d| contaminado(d, &sujos)) {
+            if redirect_aberto(&esq) && dir.is_some_and(|d| contaminado(d, &sujos)) {
                 achados.push((n, "redirecionamento".into(), "redirect:".into()));
             }
         }
@@ -1479,13 +1489,16 @@ class Ctl {
     return Files.readAllBytes(Paths.get(caminho));
   }
   String ir(@RequestParam String url) { return "redirect:" + url; }
+  String relativo(@RequestParam String path) { return "redirect:/" + path; }
+  String seguro(@RequestParam int id) { return "redirect:/owners/" + id; }
   void fixo() throws Exception { Files.readAllBytes(Paths.get("/etc/app.conf")); }
 }"#;
         let v = achar(j, Linguagem::Java);
         let sec020: Vec<_> = v.iter().filter(|x| x.0 == "SEC020").collect();
-        assert_eq!(sec020.len(), 2, "{v:?}");
+        assert_eq!(sec020.len(), 3, "{v:?}");
         assert!(sec020[0].2.contains("arquivo"), "{v:?}");
         assert!(sec020[1].2.contains("redirecionamento"), "{v:?}");
+        assert!(sec020[2].2.contains("redirecionamento"), "{v:?}");
 
         let k = "@GetMapping\nfun buscar(@RequestParam url: String) = RestTemplate().getForObject(url, String::class.java)";
         let v = achar(k, Linguagem::Kotlin);
