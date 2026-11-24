@@ -29,6 +29,8 @@ pub struct Analise {
     pub do_cache: bool,
     /// Tokens para a detecção de duplicação.
     pub tokens: Vec<Token>,
+    /// Anotações das classes (nome, linha), para as regras de arquitetura.
+    pub anotacoes: Vec<(String, usize)>,
 }
 
 impl Analise {
@@ -45,6 +47,7 @@ impl Analise {
             tempo: Duration::ZERO,
             do_cache: false,
             tokens: Vec::new(),
+            anotacoes: Vec::new(),
         }
     }
 
@@ -57,6 +60,7 @@ impl Analise {
         a.erro_parse = d.erro_parse;
         a.linhas = d.linhas;
         a.tokens = d.tokens.clone();
+        a.anotacoes = d.anotacoes.clone();
         a.do_cache = true;
         a
     }
@@ -70,6 +74,7 @@ impl Analise {
             erro_parse: self.erro_parse,
             linhas: self.linhas,
             tokens: self.tokens.clone(),
+            anotacoes: self.anotacoes.clone(),
         }
     }
 }
@@ -90,6 +95,7 @@ pub fn analisar_fonte(parsers: &mut Parsers, rel: &str, bruto: &[u8], cfg: &Conf
     let raiz_no = arvore.root_node();
     a.pacote = lang::pacote(raiz_no, fonte);
     a.imports = lang::imports(raiz_no, fonte);
+    a.anotacoes = lang::anotacoes_de_tipo(raiz_no, fonte);
 
     if raiz_no.has_error() {
         // Arquivo com erro de sintaxe não é pulado em silêncio: vira ERR000 e as outras
@@ -276,6 +282,7 @@ pub fn executar_com(
             arquivo: &a.arquivo,
             pacote: a.pacote.as_deref(),
             imports: &a.imports,
+            anotacoes: &a.anotacoes,
         })
         .collect();
     let pacotes: HashSet<String> = indice
@@ -299,6 +306,12 @@ pub fn executar_com(
         Some(d) => duplicacoes(&todas, &alvo, d.tokens_minimos),
         None => Default::default(),
     };
+    // ARQ002 olha o grafo do projeto inteiro e reporta nos arquivos do escopo.
+    let arq002 = if cfg.arquitetura.ciclos.as_deref() == Some("permitir") {
+        Vec::new()
+    } else {
+        arquitetura::ciclos(&projeto, &indice, &alvo)
+    };
 
     let analises: Vec<Analise> = todas
         .into_iter()
@@ -316,11 +329,20 @@ pub fn executar_com(
                 arquivo: &a.arquivo,
                 pacote: a.pacote.as_deref(),
                 imports: &a.imports,
+                anotacoes: &a.anotacoes,
             })
             .collect();
         violacoes.extend(arquitetura::verificar(arq, &projeto, &alvos));
+        violacoes.extend(arquitetura::framework(
+            arq,
+            &projeto,
+            &alvos,
+            &cfg.arquitetura,
+        ));
+        violacoes.extend(arquitetura::controladores(arq, &projeto, &alvos));
     }
     violacoes.extend(sml002);
+    violacoes.extend(arq002);
 
     // Supressões com motivo, regras desligadas e severidade do guarda.yml.
     let supressoes: BTreeMap<&str, &Vec<Supressao>> = analises

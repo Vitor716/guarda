@@ -439,6 +439,8 @@ pub struct ArquivoIndice<'a> {
     pub arquivo: &'a str,
     pub pacote: Option<&'a str>,
     pub imports: &'a [Import],
+    /// Anotações das classes do arquivo (nome, linha).
+    pub anotacoes: &'a [(String, usize)],
 }
 
 /// ARQ001: import de um pacote do projeto que pertence a uma camada proibida.
@@ -482,6 +484,203 @@ pub fn verificar(
 fn nome_do_arquivo(rel: &str) -> &str {
     let nome = rel.rsplit('/').next().unwrap_or(rel);
     nome.split('.').next().unwrap_or(nome)
+}
+
+/// `pacote` começa pelo prefixo, respeitando os segmentos (`android` não casa `androidx`).
+fn comeca_com(pacote: &str, prefixo: &str) -> bool {
+    pacote == prefixo || (pacote.starts_with(prefixo) && pacote[prefixo.len()..].starts_with('.'))
+}
+
+/// ARQ003: camada sem framework (padrão: dominio) importando Spring, JPA, Jackson...
+pub fn framework(
+    arq: &Arquitetura,
+    projeto: &Projeto,
+    arquivos: &[ArquivoIndice],
+    cfg: &config::Arquitetura,
+) -> Vec<Violacao> {
+    let mut v = Vec::new();
+    for a in arquivos {
+        let Some(camada) = a.pacote.and_then(|p| arq.camada_de(p, projeto)) else {
+            continue;
+        };
+        if !cfg.sem_framework.iter().any(|c| c == camada) {
+            continue;
+        }
+        for imp in a.imports {
+            if projeto.interno(&imp.pacote) {
+                continue;
+            }
+            let Some(fw) = cfg.frameworks.iter().find(|f| comeca_com(&imp.pacote, f)) else {
+                continue;
+            };
+            v.push(Violacao::nova(
+                "ARQ003",
+                a.arquivo,
+                imp.linha,
+                format!("{camada} usa framework ({fw}: {})", imp.nome),
+                "mantenha esta camada sem framework: anote e converta na camada de infraestrutura",
+                nome_do_arquivo(a.arquivo),
+                &imp.texto,
+                None,
+            ));
+        }
+    }
+    v
+}
+
+const CONTROLADORES: &[&str] = &[
+    "RestController",
+    "Controller",
+    "ControllerAdvice",
+    "RestControllerAdvice",
+];
+const CAMADAS_DE_ENTRADA: &[&str] = &["adaptadores-entrada", "entrada", "web"];
+
+/// ARQ004: @RestController/@Controller fora da camada de entrada.
+pub fn controladores(
+    arq: &Arquitetura,
+    projeto: &Projeto,
+    arquivos: &[ArquivoIndice],
+) -> Vec<Violacao> {
+    let Some(entrada) = arq
+        .camadas
+        .iter()
+        .map(|c| c.nome.as_str())
+        .find(|c| CAMADAS_DE_ENTRADA.contains(c))
+    else {
+        return Vec::new();
+    };
+    let mut v = Vec::new();
+    for a in arquivos {
+        let camada = a.pacote.and_then(|p| arq.camada_de(p, projeto));
+        if camada == Some(entrada) {
+            continue;
+        }
+        for (nome, linha) in a.anotacoes {
+            if !CONTROLADORES.contains(&nome.as_str()) {
+                continue;
+            }
+            let onde = camada.map_or("fora de qualquer camada".to_string(), |c| format!("em {c}"));
+            v.push(Violacao::nova(
+                "ARQ004",
+                a.arquivo,
+                *linha,
+                format!("@{nome} {onde}"),
+                format!("mova a classe para a camada {entrada}"),
+                nome_do_arquivo(a.arquivo),
+                nome,
+                None,
+            ));
+        }
+    }
+    v
+}
+
+/// Fatia do pacote: o primeiro segmento abaixo do pacote base.
+fn fatia<'a>(pacote: &'a str, projeto: &Projeto) -> Option<&'a str> {
+    let base = projeto.base.as_deref().filter(|b| !b.is_empty())?;
+    if !comeca_com(pacote, base) || pacote == base {
+        return None;
+    }
+    pacote[base.len() + 1..].split('.').next()
+}
+
+/// ARQ002: ciclo entre fatias (pacotes de primeiro nível abaixo da base), pelos imports.
+/// Cada arquivo do escopo recebe uma violação por fatia de destino que fecha um ciclo.
+pub fn ciclos(projeto: &Projeto, todos: &[ArquivoIndice], escopo: &HashSet<&str>) -> Vec<Violacao> {
+    use std::collections::BTreeMap;
+    let mut arestas: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for a in todos {
+        let Some(de) = a.pacote.and_then(|p| fatia(p, projeto)) else {
+            continue;
+        };
+        for imp in a.imports {
+            if let Some(para) = fatia(&imp.pacote, projeto).filter(|p| *p != de) {
+                arestas.entry(de).or_default().insert(para);
+            }
+        }
+    }
+    // Componentes fortemente conexos (Kosaraju): o grafo de fatias é pequeno.
+    let nos: BTreeSet<&str> = arestas
+        .iter()
+        .flat_map(|(a, bs)| std::iter::once(*a).chain(bs.iter().copied()))
+        .collect();
+    let mut inverso: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for (a, bs) in &arestas {
+        for b in bs {
+            inverso.entry(b).or_default().insert(a);
+        }
+    }
+    fn visitar<'a>(
+        n: &'a str,
+        g: &BTreeMap<&'a str, BTreeSet<&'a str>>,
+        vistos: &mut BTreeSet<&'a str>,
+        saida: &mut Vec<&'a str>,
+    ) {
+        if !vistos.insert(n) {
+            return;
+        }
+        for m in g.get(n).into_iter().flatten() {
+            visitar(m, g, vistos, saida);
+        }
+        saida.push(n);
+    }
+    let mut ordem = Vec::new();
+    let mut vistos = BTreeSet::new();
+    for n in &nos {
+        visitar(n, &arestas, &mut vistos, &mut ordem);
+    }
+    let mut componente: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut vistos = BTreeSet::new();
+    let mut membros: Vec<Vec<&str>> = Vec::new();
+    for n in ordem.iter().rev() {
+        if vistos.contains(n) {
+            continue;
+        }
+        let mut grupo = Vec::new();
+        visitar(n, &inverso, &mut vistos, &mut grupo);
+        grupo.sort();
+        for m in &grupo {
+            componente.insert(m, membros.len());
+        }
+        membros.push(grupo);
+    }
+
+    let mut v = Vec::new();
+    for a in todos.iter().filter(|a| escopo.contains(a.arquivo)) {
+        let Some(de) = a.pacote.and_then(|p| fatia(p, projeto)) else {
+            continue;
+        };
+        let Some(&c) = componente.get(de) else {
+            continue;
+        };
+        if membros[c].len() < 2 {
+            continue;
+        }
+        let mut ja = BTreeSet::new();
+        for imp in a.imports {
+            let Some(para) = fatia(&imp.pacote, projeto) else {
+                continue;
+            };
+            if para == de || componente.get(para) != Some(&c) || !ja.insert(para) {
+                continue;
+            }
+            v.push(Violacao::nova(
+                "ARQ002",
+                a.arquivo,
+                imp.linha,
+                format!(
+                    "ciclo entre fatias: {de} → {para} → {de} (ciclo: {})",
+                    membros[c].join(", ")
+                ),
+                "quebre o ciclo: o lado de dentro declara uma interface e o de fora implementa",
+                nome_do_arquivo(a.arquivo),
+                &format!("{de}->{para}"),
+                None,
+            ));
+        }
+    }
+    v
 }
 
 #[derive(Debug, Clone)]
@@ -581,6 +780,73 @@ mod testes {
         Projeto::novo(Some(base), HashSet::new())
     }
 
+    fn imp(pacote: &str, nome: &str, linha: usize) -> Import {
+        Import {
+            pacote: pacote.into(),
+            nome: nome.into(),
+            linha,
+            texto: format!("import {pacote}.{nome};"),
+        }
+    }
+
+    #[test]
+    fn arq002_003_004() {
+        let p = projeto("com.app");
+        let arq = preset("hexagonal").unwrap();
+        let dom = vec![
+            imp("jakarta.persistence", "Entity", 3),
+            imp("com.app.infra.db", "Repo", 4),
+            imp("androidx.room", "Dao", 5),
+        ];
+        let infra = vec![imp("com.app.domain", "Usuario", 3)];
+        let app = vec![imp("com.app.domain", "Usuario", 3)];
+        let anot_ctrl = vec![("RestController".to_string(), 7)];
+        let arquivos = [
+            ArquivoIndice {
+                arquivo: "D.java",
+                pacote: Some("com.app.domain"),
+                imports: &dom,
+                anotacoes: &[],
+            },
+            ArquivoIndice {
+                arquivo: "I.java",
+                pacote: Some("com.app.infra.db"),
+                imports: &infra,
+                anotacoes: &[],
+            },
+            ArquivoIndice {
+                arquivo: "C.java",
+                pacote: Some("com.app.application"),
+                imports: &app,
+                anotacoes: &anot_ctrl,
+            },
+        ];
+        let cfg = config::Arquitetura::default();
+        let f: Vec<String> = framework(&arq, &p, &arquivos, &cfg)
+            .into_iter()
+            .map(|v| v.mensagem)
+            .collect();
+        assert_eq!(
+            f,
+            [
+                "dominio usa framework (jakarta.persistence: Entity)",
+                "dominio usa framework (androidx: Dao)"
+            ]
+        );
+        let c = controladores(&arq, &p, &arquivos);
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].mensagem, "@RestController em aplicacao");
+        assert_eq!(c[0].linha, 7);
+
+        let escopo: HashSet<&str> = ["D.java", "I.java", "C.java"].into_iter().collect();
+        let ciclo: Vec<(&str, usize)> = ciclos(&p, &arquivos, &escopo)
+            .iter()
+            .map(|v| (if v.arquivo == "D.java" { "D" } else { "I" }, v.linha))
+            .collect();
+        // domain ↔ infra é ciclo; application → domain não é.
+        assert_eq!(ciclo, [("D", 4), ("I", 3)]);
+    }
+
     #[test]
     fn padrao_archunit() {
         let p = projeto("com.app");
@@ -640,9 +906,13 @@ mod testes {
             arquivo: "src/main/java/com/app/domain/Nota.java",
             pacote: Some("com.app.domain"),
             imports: &imports,
+            anotacoes: &[],
         }];
         let v = verificar(&arq, &p, &arquivos);
         assert_eq!(v.len(), 1);
+        // O mesmo import também é framework? Não: HttpClient é do projeto.
+        let cfg = config::Arquitetura::default();
+        assert!(framework(&arq, &p, &arquivos, &cfg).is_empty());
         assert_eq!(
             v[0].mensagem,
             "dominio importa adaptadores-saida (HttpClient)"

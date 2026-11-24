@@ -24,13 +24,16 @@ fn check_sem_config_detecta_e_reporta() {
 src/main/java/com/app/domain/Nota.java
   3 ARQ001 dominio importa adaptadores-saida (HttpClient) | dependa de uma interface (porta) em dominio e implemente em adaptadores-saida
   7 SUP001 @SuppressWarnings sem motivo | comente o motivo na mesma linha ou na linha de cima
+  3 ARQ002 ciclo entre fatias: domain → infra → domain (ciclo: domain, infra) | quebre o ciclo: o lado de dentro declara uma interface e o de fora implementa
 src/main/java/com/app/domain/Quebrado.java
   4 ERR000 o parser não leu o arquivo inteiro (1 trecho(s) com erro) | se o código compila, é limite da gramática: registre o caso
+src/main/java/com/app/infra/HttpClient.java
+  3 ARQ002 ciclo entre fatias: infra → domain → infra (ciclo: domain, infra) | quebre o ciclo: o lado de dentro declara uma interface e o de fora implementa
 src/main/kotlin/com/app/application/Calculo.kt
   7 KT001 uso de !! | troque por ?:, ?.let ou requireNotNull com mensagem
  10 SUP001 guarda:ignorar sem código ou sem motivo | escreva // guarda:ignorar CODIGO motivo: <por quê>
  11 KT001 uso de !! | troque por ?:, ?.let ou requireNotNull com mensagem
-✗ 6 erros em 3 arquivos";
+✗ 6 erros em 4 arquivos · 2 avisos";
     assert_eq!(sem_tempo(&saida).trim_end(), esperado);
 }
 
@@ -41,7 +44,7 @@ fn init_congela_e_check_cobra_so_o_novo() {
     assert_eq!(codigo, 0, "{saida}");
     assert!(saida.contains("arquitetura: hexagonal"), "{saida}");
     assert!(
-        saida.contains("baseline: 6 violações congeladas em 4 regras"),
+        saida.contains("baseline: 8 violações congeladas em 5 regras"),
         "{saida}"
     );
     assert!(p.path().join("guarda.yml").exists());
@@ -49,7 +52,7 @@ fn init_congela_e_check_cobra_so_o_novo() {
     let (codigo, saida) = guarda(p.path(), &["check"]);
     assert_eq!(codigo, 0, "{saida}");
     assert!(saida.starts_with("✓ guarda 0 erros · "), "{saida}");
-    assert!(saida.contains(" · baseline 6 · "), "{saida}");
+    assert!(saida.contains(" · baseline 8 · "), "{saida}");
 
     // Código novo com !! é cobrado; o legado (que mudou de linha) continua congelado.
     let rel = "src/main/kotlin/com/app/application/Calculo.kt";
@@ -70,7 +73,7 @@ fn saida_e_deterministica() {
     let (_, a) = guarda(p.path(), &["check", "--sem-baseline", "--formato", "json"]);
     let (_, b) = guarda(p.path(), &["check", "--sem-baseline", "--formato", "json"]);
     assert_eq!(a, b);
-    assert_eq!(a.lines().count(), 6);
+    assert_eq!(a.lines().count(), 8);
 }
 
 #[test]

@@ -156,8 +156,13 @@ pub struct Arquitetura {
     pub excecoes: Vec<String>,
     /// Arestas permitidas para camadas declaradas à mão (preset `nenhum`).
     pub permitidas: Vec<String>,
-    /// Ciclos entre pacotes (ainda sem efeito: Fase 3).
+    /// ARQ002: ciclos entre fatias (pacotes de primeiro nível abaixo da base).
+    #[schemars(extend("enum" = ["proibir", "permitir"]))]
     pub ciclos: Option<String>,
+    /// ARQ003: camadas que não podem importar framework.
+    pub sem_framework: Vec<String>,
+    /// ARQ003: prefixos de pacote considerados framework.
+    pub frameworks: Vec<String>,
 }
 
 impl Default for Arquitetura {
@@ -169,33 +174,63 @@ impl Default for Arquitetura {
             excecoes: Vec::new(),
             permitidas: Vec::new(),
             ciclos: None,
+            sem_framework: vec!["dominio".into()],
+            frameworks: [
+                "org.springframework",
+                "jakarta.persistence",
+                "javax.persistence",
+                "org.hibernate",
+                "com.fasterxml.jackson",
+                "io.micronaut",
+                "io.quarkus",
+                "io.ktor",
+                "android",
+                "androidx",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
         }
     }
 }
 
-/// Limites das regras de tamanho e complexidade.
+/// Limites das regras de tamanho e complexidade. A violação é acima do limite.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields, default)]
 pub struct Limites {
-    /// CPX005: linhas de código por função (sem brancos e comentários).
+    /// CPX005: linhas de código por função (sem brancos e comentários). detekt: 60.
     pub linhas_funcao: u32,
-    /// CPX001: complexidade cognitiva por função (Sonar S3776).
+    /// CPX001: complexidade cognitiva por função. Sonar S3776: 15.
     pub complexidade_cognitiva: u32,
-    /// Ainda sem efeito (Fase 3).
-    pub linhas_classe: Option<u32>,
-    pub parametros: Option<u32>,
-    pub aninhamento: Option<u32>,
+    /// CPX002: complexidade ciclomática por função. detekt e PMD: 15.
+    pub complexidade_ciclomatica: u32,
+    /// CPX003: profundidade de blocos aninhados. detekt NestedBlockDepth: 4.
+    pub aninhamento: u32,
+    /// CPX004: operandos de && e || numa condição. detekt ComplexCondition: 4.
+    pub condicao_operadores: u32,
+    /// CPX006: linhas de código por classe. detekt LargeClass: 600.
+    pub linhas_classe: u32,
+    /// CPX007: parâmetros por função. detekt LongParameterList: 6.
+    pub parametros: u32,
+    /// CPX008: funções por classe. detekt TooManyFunctions: 11.
+    pub funcoes_por_classe: u32,
+    /// CPX009: `return` por função. detekt ReturnCount: 2.
+    pub retornos: u32,
 }
 
 impl Default for Limites {
-    /// Perfil recomendado: detekt LongMethod (60) e Sonar S3776 (15).
+    /// Perfil recomendado: os padrões do detekt e do Sonar.
     fn default() -> Self {
         Self {
             linhas_funcao: 60,
             complexidade_cognitiva: 15,
-            linhas_classe: None,
-            parametros: None,
-            aninhamento: None,
+            complexidade_ciclomatica: 15,
+            aninhamento: 4,
+            condicao_operadores: 4,
+            linhas_classe: 600,
+            parametros: 6,
+            funcoes_por_classe: 11,
+            retornos: 2,
         }
     }
 }
@@ -287,12 +322,7 @@ impl Config {
 
     /// Impressão digital do que muda o resultado das regras por arquivo (para o cache).
     pub fn impressao_regras(&self) -> String {
-        format!(
-            "{}|{}|{}|tokens1",
-            env!("CARGO_PKG_VERSION"),
-            self.limites.linhas_funcao,
-            self.limites.complexidade_cognitiva
-        )
+        format!("{}|{:?}|regras3", env!("CARGO_PKG_VERSION"), self.limites)
     }
 }
 

@@ -248,6 +248,43 @@ pub fn imports(raiz: Node, fonte: &str) -> Vec<Import> {
     v
 }
 
+/// Anotações das declarações de tipo do arquivo: (nome simples, linha do nome do tipo).
+/// Usadas pelas regras de arquitetura (ex.: @RestController fora da camada de entrada).
+pub fn anotacoes_de_tipo(raiz: Node, fonte: &str) -> Vec<(String, usize)> {
+    let mut v = Vec::new();
+    visitar(raiz, |n| {
+        if !matches!(
+            n.kind(),
+            "class_declaration"
+                | "interface_declaration"
+                | "enum_declaration"
+                | "record_declaration"
+                | "object_declaration"
+        ) {
+            return;
+        }
+        let Some(modificadores) = filhos(n).into_iter().find(|c| c.kind() == "modifiers") else {
+            return;
+        };
+        let l = linha(n.child_by_field_name("name").unwrap_or(n));
+        for a in filhos(modificadores) {
+            let nome = match a.kind() {
+                "marker_annotation" | "annotation" => match a.child_by_field_name("name") {
+                    Some(nm) => texto(nm, fonte),
+                    // Kotlin: @Nome ou @Nome(args), sem campo "name".
+                    None => texto(a, fonte).trim_start_matches('@'),
+                },
+                _ => continue,
+            };
+            let nome = nome.split('(').next().unwrap_or(nome).trim();
+            let nome = nome.rsplit('.').next().unwrap_or(nome);
+            let nome = nome.rsplit(':').next().unwrap_or(nome);
+            v.push((nome.to_string(), l));
+        }
+    });
+    v
+}
+
 /// Para cada linha (índice 0-based), diz se ela tem código, ou seja, se não é em branco
 /// nem só comentário. Usada na contagem de linhas de função (CPX005).
 pub fn linhas_de_codigo(fonte: &str, raiz: Node) -> Vec<bool> {

@@ -1,10 +1,15 @@
-//! Regras por arquivo. As regras de projeto (ARQ001) ficam em `arquitetura`.
+//! Regras por arquivo. As regras de projeto (ARQ001-004) ficam em `arquitetura`.
 
 pub mod complexidade;
+pub mod estrutura;
+pub mod excecoes;
+pub mod java;
+pub mod kotlin;
+pub mod smells;
 pub mod supressao;
 
 use crate::config::Limites;
-use crate::lang::{self, Linguagem, eh_funcao, eh_lambda, linha, simbolo_dono, texto, visitar};
+use crate::lang::{self, Linguagem, eh_funcao, eh_lambda, linha, simbolo_dono, visitar};
 use crate::modelo::Violacao;
 pub use supressao::Supressao;
 use tree_sitter::Node;
@@ -19,9 +24,12 @@ pub struct Contexto<'a> {
 
 pub fn por_arquivo(ctx: &Contexto) -> (Vec<Violacao>, Vec<Supressao>) {
     let (mut v, supressoes) = supressao::verificar(ctx.raiz, ctx.fonte, ctx.ling, ctx.arquivo);
-    funcoes(ctx, &mut v);
+    funcoes_e_classes(ctx, &mut v);
+    excecoes::verificar(ctx, &mut v);
+    smells::verificar(ctx, &mut v);
+    java::verificar(ctx, &mut v);
     if ctx.ling == Linguagem::Kotlin {
-        kt001(ctx, &mut v);
+        kotlin::verificar(ctx, &mut v);
     }
     (v, supressoes)
 }
@@ -37,10 +45,14 @@ fn dentro_de_funcao(n: Node) -> bool {
     false
 }
 
-fn funcoes(ctx: &Contexto, v: &mut Vec<Violacao>) {
+fn funcoes_e_classes(ctx: &Contexto, v: &mut Vec<Violacao>) {
     let codigo = lang::linhas_de_codigo(ctx.fonte, ctx.raiz);
     let lim = ctx.limites;
     visitar(ctx.raiz, |n| {
+        if estrutura::eh_classe_pub(n.kind()) {
+            estrutura::classe(ctx, n, &codigo, v);
+            return;
+        }
         if !eh_funcao(n.kind()) || lang::corpo_da_funcao(n).is_none() {
             return;
         }
@@ -77,32 +89,6 @@ fn funcoes(ctx: &Contexto, v: &mut Vec<Violacao>) {
                 ));
             }
         }
-    });
-}
-
-/// KT001: `!!` (detekt UnsafeCallOnNullableType).
-fn kt001(ctx: &Contexto, v: &mut Vec<Violacao>) {
-    let linhas: Vec<&str> = ctx.fonte.lines().collect();
-    visitar(ctx.raiz, |n| {
-        if n.kind() != "unary_expression" {
-            return;
-        }
-        let Some(op) = n.child_by_field_name("operator") else {
-            return;
-        };
-        if op.kind() != "!!" {
-            return;
-        }
-        let row = op.start_position().row;
-        v.push(Violacao::nova(
-            "KT001",
-            ctx.arquivo,
-            row + 1,
-            "uso de !!",
-            "troque por ?:, ?.let ou requireNotNull com mensagem",
-            simbolo_dono(n, ctx.fonte),
-            linhas.get(row).copied().unwrap_or(texto(n, ctx.fonte)),
-            None,
-        ));
+        estrutura::funcao(ctx, n, v);
     });
 }

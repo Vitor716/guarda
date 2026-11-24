@@ -68,6 +68,7 @@ pub struct Dados {
     pub erro_parse: bool,
     pub linhas: usize,
     pub tokens: Vec<crate::duplicacao::Token>,
+    pub anotacoes: Vec<(String, usize)>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

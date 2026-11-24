@@ -15,85 +15,159 @@ pub enum Severidade {
 pub struct Regra {
     pub codigo: &'static str,
     pub nome: &'static str,
+    /// Severidade de hoje. Regra nova entra como aviso até ser medida sem falso positivo.
     pub severidade: Severidade,
+    /// Severidade que a regra terá depois de validada em projeto real.
+    pub alvo: Severidade,
     /// Regra de limite: o baseline guarda o valor e só aceita que ele diminua (catraca).
     pub catraca: bool,
 }
 
-/// Regras da Fase 0. Códigos estáveis: nunca reaproveite um código removido.
+use Severidade::{Aviso, Erro};
+
+const fn r(
+    codigo: &'static str,
+    nome: &'static str,
+    severidade: Severidade,
+    alvo: Severidade,
+    catraca: bool,
+) -> Regra {
+    Regra {
+        codigo,
+        nome,
+        severidade,
+        alvo,
+        catraca,
+    }
+}
+
+/// Catálogo. Códigos estáveis: nunca reaproveite um código removido.
 pub const REGRAS: &[Regra] = &[
-    Regra {
-        codigo: "ERR000",
-        nome: "arquivo que o parser não leu",
-        severidade: Severidade::Erro,
-        catraca: false,
-    },
-    Regra {
-        codigo: "ARQ001",
-        nome: "dependência proibida entre camadas",
-        severidade: Severidade::Erro,
-        catraca: false,
-    },
-    Regra {
-        codigo: "CPX001",
-        nome: "complexidade cognitiva",
-        severidade: Severidade::Erro,
-        catraca: true,
-    },
-    Regra {
-        codigo: "CPX005",
-        nome: "função longa",
-        severidade: Severidade::Erro,
-        catraca: true,
-    },
-    Regra {
-        codigo: "KT001",
-        nome: "uso de !!",
-        severidade: Severidade::Erro,
-        catraca: false,
-    },
-    Regra {
-        codigo: "SUP001",
-        nome: "supressão sem motivo",
-        severidade: Severidade::Erro,
-        catraca: false,
-    },
-    Regra {
-        codigo: "SML002",
-        nome: "código duplicado",
-        severidade: Severidade::Aviso,
-        catraca: false,
-    },
-    Regra {
-        codigo: "COV000",
-        nome: "testes falharam ao gerar a cobertura",
-        severidade: Severidade::Erro,
-        catraca: false,
-    },
-    Regra {
-        codigo: "COV001",
-        nome: "cobertura do código novo",
-        severidade: Severidade::Erro,
-        catraca: false,
-    },
-    Regra {
-        codigo: "COV002",
-        nome: "cobertura por pacote",
-        severidade: Severidade::Erro,
-        catraca: true,
-    },
-    Regra {
-        codigo: "COV003",
-        nome: "cobertura geral",
-        severidade: Severidade::Erro,
-        catraca: true,
-    },
-    Regra {
-        codigo: "GRD001",
-        nome: "guarda.yml ou baseline alterado (revisão humana)",
-        severidade: Severidade::Aviso,
-        catraca: false,
-    },
+    r("ERR000", "arquivo que o parser não leu", Erro, Erro, false),
+    r(
+        "ARQ001",
+        "dependência proibida entre camadas",
+        Erro,
+        Erro,
+        false,
+    ),
+    r(
+        "ARQ002",
+        "ciclo entre fatias do projeto",
+        Aviso,
+        Erro,
+        false,
+    ),
+    r("ARQ003", "framework dentro do domínio", Aviso, Erro, false),
+    r(
+        "ARQ004",
+        "controlador fora da camada de entrada",
+        Aviso,
+        Erro,
+        false,
+    ),
+    r("CPX001", "complexidade cognitiva", Erro, Erro, true),
+    r("CPX002", "complexidade ciclomática", Aviso, Erro, true),
+    r("CPX003", "aninhamento profundo", Aviso, Erro, true),
+    r(
+        "CPX004",
+        "condição com muitos operadores",
+        Aviso,
+        Erro,
+        false,
+    ),
+    r("CPX005", "função longa", Erro, Erro, true),
+    r("CPX006", "classe longa", Aviso, Erro, true),
+    r("CPX007", "muitos parâmetros", Aviso, Erro, true),
+    r("CPX008", "muitas funções na classe", Aviso, Erro, true),
+    r("CPX009", "muitos return", Aviso, Erro, true),
+    r(
+        "SML001",
+        "God Class (aproximação sintática)",
+        Aviso,
+        Aviso,
+        false,
+    ),
+    r("SML002", "código duplicado", Aviso, Aviso, false),
+    r("SML003", "número mágico", Aviso, Aviso, false),
+    r("SML004", "catch genérico", Aviso, Erro, false),
+    r(
+        "SML005",
+        "exceção engolida ou catch vazio",
+        Aviso,
+        Erro,
+        false,
+    ),
+    r("SML006", "lançar exceção genérica", Aviso, Erro, false),
+    r("SML007", "código comentado", Aviso, Aviso, false),
+    r("SML008", "membro privado não usado", Aviso, Aviso, false),
+    r("SML009", "TODO/FIXME sem ticket", Aviso, Aviso, false),
+    r("KT001", "uso de !!", Erro, Erro, false),
+    r("KT002", "GlobalScope.launch/async", Aviso, Erro, false),
+    r("KT003", "Thread.sleep em corrotina", Aviso, Erro, false),
+    r("KT004", "suspend fun que retorna Flow", Aviso, Erro, false),
+    r(
+        "KT005",
+        "Dispatchers fixo em vez de injetado",
+        Aviso,
+        Aviso,
+        false,
+    ),
+    r("KT006", "data class com var", Aviso, Aviso, false),
+    r(
+        "KT007",
+        "println/printStackTrace em produção",
+        Aviso,
+        Erro,
+        false,
+    ),
+    r(
+        "JV001",
+        "System.out/printStackTrace em produção",
+        Aviso,
+        Erro,
+        false,
+    ),
+    r(
+        "JV002",
+        "recurso sem try-with-resources",
+        Aviso,
+        Erro,
+        false,
+    ),
+    r(
+        "JV003",
+        "equals sem hashCode (ou o contrário)",
+        Aviso,
+        Erro,
+        false,
+    ),
+    r(
+        "JV004",
+        "Optional como campo ou parâmetro",
+        Aviso,
+        Aviso,
+        false,
+    ),
+    r("JV005", "java.util.Date/Calendar", Aviso, Aviso, false),
+    r("SUP001", "supressão sem motivo", Erro, Erro, false),
+    r(
+        "COV000",
+        "testes falharam ao gerar a cobertura",
+        Erro,
+        Erro,
+        false,
+    ),
+    r("COV001", "cobertura do código novo", Erro, Erro, false),
+    r("COV002", "cobertura por pacote", Erro, Erro, true),
+    r("COV003", "cobertura geral", Erro, Erro, true),
+    r(
+        "GRD001",
+        "guarda.yml ou baseline alterado (revisão humana)",
+        Aviso,
+        Aviso,
+        false,
+    ),
 ];
 
 pub fn regra(codigo: &str) -> Option<&'static Regra> {
