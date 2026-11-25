@@ -8,9 +8,10 @@ O problema que resolve: a IA trata skill e baseline como sugestão e foge do pad
 só reprova depois do push. A `guarda` é o portão objetivo que a IA precisa passar antes de
 terminar uma tarefa: mesmo código + mesmo `guarda.yml` + mesma versão = mesmo resultado.
 
-> Status: **Fase 4 em andamento (v0.4.0+: 94 regras, 5 presets, segurança/Spring/bugs, baselines avançadas, Gradle/Maven, releases)**.
+> Status: **v0.5.0 (Fase 4): 94 regras calibradas em 41 projetos reais, 5 presets, segurança/Spring/bugs, baselines avançadas, Gradle/Maven, releases**.
 > A Fase 2 aguarda a comparação com o Sonar. Ver [docs/guia-ia.md](docs/guia-ia.md) (manual
-> operacional para agentes de IA), [docs/fase-0.md](docs/fase-0.md),
+> operacional para agentes de IA), [docs/novas-regras.md](docs/novas-regras.md) (como criar e
+> calibrar regras), [docs/fase-0.md](docs/fase-0.md),
 > [docs/fase-1.md](docs/fase-1.md), [docs/fase-2.md](docs/fase-2.md),
 > [docs/fase-3.md](docs/fase-3.md), [docs/fase-4.md](docs/fase-4.md) e o [roadmap](#roadmap).
 
@@ -20,7 +21,7 @@ Binário pronto (Windows, Linux, macOS Intel e Apple Silicon) em cada release. O
 privado, então o download passa pelo `gh` autenticado:
 
 ```bash
-gh release download v0.4.0 -R Vitor716/guarda -p "*x86_64-pc-windows-msvc.zip"
+gh release download v0.5.0 -R Vitor716/guarda -p "*x86_64-pc-windows-msvc.zip"
 ```
 
 Ou compilado da fonte:

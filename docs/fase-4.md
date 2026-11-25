@@ -182,3 +182,10 @@ padrão do `jwt.secret` no auth-demo). srv-usuario-api e srvcondominioapi: os me
 da medição anterior.
 
 Total nos 41 projetos: 0 erro de parse, 0 falso positivo conhecido nas regras do lote 5.
+
+## v0.5.0 (2026-11-25)
+
+Fecha o lote 5 calibrado: 94 regras, 0 falso positivo conhecido nos 41 projetos. A receita
+para a próxima IA criar e calibrar regras (critérios, código, armadilhas das gramáticas,
+medição antes/depois e revisão) está em [novas-regras.md](novas-regras.md), com os scripts de
+medição em `tools/`.

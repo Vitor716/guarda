@@ -2,7 +2,8 @@
 
 Linter determinístico para Kotlin e Java em Rust (94 regras). Documentação para humanos no
 [README.md](README.md), manual operacional para agentes de IA em [docs/guia-ia.md](docs/guia-ia.md)
-(e [AGENTS.md](AGENTS.md)) e medições de cada fase em `docs/`.
+(e [AGENTS.md](AGENTS.md)), receita para criar e calibrar regras em
+[docs/novas-regras.md](docs/novas-regras.md) e medições de cada fase em `docs/`.
 
 ## Comandos
 
@@ -56,6 +57,8 @@ cargo install --path . --locked             # atualiza o `guarda` do PATH (os ho
 - `src/cobertura.rs`: XML do JaCoCo/Kover, COV000-003. `src/duplicacao.rs`: tokens e Karp-Rabin.
 - `src/build.rs`: `integrar gradle` (script aplicado no build da raiz) e o trecho do Maven.
 - `src/saida.rs`: formato compacto, JSON, SARIF e texto. `src/main.rs`: CLI (clap).
+- `tools/`: scripts de calibração (`clonar.py` monta o corpus, `medir.py` conta por regra e
+  compara antes/depois, `ver_achados.py` mostra cada achado com contexto e segredos mascarados).
 - `.github/workflows/`: `ci.yml` (fmt, clippy, testes em Linux e Windows) e `release.yml`
   (binários de 4 alvos ao empurrar uma tag `v*`).
 

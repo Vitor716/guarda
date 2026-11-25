@@ -2,7 +2,8 @@
 
 Este guia é o manual operacional para qualquer agente de IA (Claude Code, Codex, Antigravity,
 Cursor, Copilot ou outro) utilizar a ferramenta `guarda` de forma autônoma, correta e com o
-mínimo de tokens em projetos **Java e Kotlin**.
+mínimo de tokens em projetos **Java e Kotlin**. Para criar regras novas ou calibrar as
+existentes, o manual é o [novas-regras.md](novas-regras.md).
 
 ---
 

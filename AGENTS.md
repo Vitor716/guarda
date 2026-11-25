@@ -4,7 +4,8 @@ Instruções para agentes de IA (Codex, Antigravity, Claude Code, Cursor, Copilo
 trabalhando **neste repositório (`guarda`)** ou usando a ferramenta `guarda` em outros projetos.
 
 > Se você é um agente que vai **usar** a `guarda` para validar um projeto Java/Kotlin, leia
-> primeiro [docs/guia-ia.md](docs/guia-ia.md).
+> primeiro [docs/guia-ia.md](docs/guia-ia.md). Para **criar ou calibrar regras** (aumentar a
+> base de validação), siga [docs/novas-regras.md](docs/novas-regras.md).
 
 ## O que é este repositório
 
@@ -18,7 +19,7 @@ e medições em projetos reais em `docs/fase-*.md`.
 ```bash
 cargo fmt --check                       # formatação (exigida no CI)
 cargo clippy --all-targets -- -D warnings  # lint sem warnings (exigido no CI)
-cargo test                              # unitários (104) + ponta a ponta (tests/*.rs)
+cargo test                              # unitários + ponta a ponta (tests/*.rs)
 cargo run -- arvore caminho/Arquivo.kt  # imprime AST do tree-sitter (use antes de criar regra)
 cargo run --release -- medir <copia>    # mede parse, tempo e violações em cópia de projeto real
 cargo install --path . --locked         # atualiza `guarda` no PATH (só após testar tudo!)
@@ -49,6 +50,7 @@ cargo install --path . --locked         # atualiza `guarda` no PATH (só após t
 - `src/config.rs`: `guarda.yml` (`estende`, `perfil`, `schemars` JSON Schema). Use `cfg.desligada()` e `cfg.severidade()`.
 - `src/hook.rs`: `proteger`, `pos-edicao` (código + recursos) e `final` para Claude, Codex e Antigravity.
 - `src/integracao.rs`, `src/build.rs`, `src/mcp.rs`, `src/explicar.rs`, `src/saida.rs`, `src/main.rs`.
+- `tools/`: calibração em projetos reais (`clonar.py`, `medir.py`, `ver_achados.py`); ver [docs/novas-regras.md](docs/novas-regras.md).
 
 ## Invariantes obrigatórias
 
