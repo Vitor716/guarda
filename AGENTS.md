@@ -55,10 +55,11 @@ cargo install --path . --locked         # atualiza `guarda` no PATH (só após t
 ## Invariantes obrigatórias
 
 1. **Determinismo absoluto**: nenhuma data, rede ou ordem de `HashMap` pode afetar a saída; ordene sempre antes de imprimir ou salvar.
-2. **Catálogo e explicação em sincronia**: toda regra deve estar em `modelo::REGRAS` e ter entrada correspondente em `explicar::EXPLICACOES` (o teste `toda_regra_tem_explicacao` garante). Nunca reaproveite um código removido.
+2. **Catálogo e explicação em sincronia**: toda regra deve estar em `modelo::REGRAS` e ter entrada correspondente em `explicar::EXPLICACOES` (o teste `toda_regra_tem_explicacao` garante). Nunca reaproveite um código removido. O `docs/regras.md` é gerado: `GUARDA_ATUALIZAR_DOCS=1 cargo test catalogo` (o teste `catalogo_em_docs_esta_em_dia` reprova se ficar velho).
 3. **Regra nova entra como `Aviso`** (`severidade: Aviso`, `alvo` = severidade final) com origem rastreável (Sonar, detekt, PMD, ArchUnit, Spring) e só é promovida após medição e revisão de falsos positivos em cópias de projetos reais registradas em `docs/fase-*.md`.
 4. **Confira a AST antes de escrever regra**: use `cargo run -- arvore <arquivo>` (Java e Kotlin nomeiam nós de forma diferente).
 5. **Medições sempre em cópia (scratchpad)**, nunca alterando projetos reais durante testes.
 6. **Hooks nunca bloqueiam por erro interno da própria guarda** — apenas por decisão explícita.
 7. **Textos em português**, curtos e acionáveis (a correção vem sempre na `dica`).
-8. **Qualidade antes de finalizar**: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` e `cargo test` devem passar com zero avisos.
+8. **Mudança visível vai no `CHANGELOG.md`** (seção **[Não lançado]**).
+9. **Qualidade antes de finalizar**: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` e `cargo test` devem passar com zero avisos.

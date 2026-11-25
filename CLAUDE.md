@@ -72,6 +72,8 @@ cargo install --path . --locked             # atualiza o `guarda` do PATH (os ho
   Java e Kotlin nomeiam diferente: `if_statement` × `if_expression`, `catch_clause` ×
   `catch_block`).
 - Toda regra entra com teste; mudança de saída quebra `tests/cli.rs` de propósito.
+- `docs/regras.md` é gerado do catálogo: `GUARDA_ATUALIZAR_DOCS=1 cargo test catalogo`.
+  Mudança visível entra em **[Não lançado]** no `CHANGELOG.md`.
 - Regra nova entra como aviso (`severidade: Aviso`, `alvo` = a severidade final) e precisa de
   uma explicação em `explicar.rs`. Antes de promover a erro, meça num projeto real e revise
   amostras de cada achado (`docs/fase-N.md` registra a revisão).

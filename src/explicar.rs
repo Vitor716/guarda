@@ -721,4 +721,99 @@ mod testes {
         assert!(explicar("kt001").unwrap().starts_with("KT001 "));
         assert!(explicar("XYZ999").is_none());
     }
+
+    const FAMILIAS: &[(&str, &str)] = &[
+        ("ERR", "Leitura"),
+        ("ARQ", "Arquitetura"),
+        ("NEG", "Regra de negócio"),
+        ("CPX", "Complexidade e tamanho"),
+        ("CND", "Condições e guard clauses"),
+        ("POL", "Polimorfismo"),
+        ("SML", "Code smells"),
+        ("BUG", "Correção (bugs)"),
+        ("SEC", "Segurança"),
+        ("SPR", "Spring"),
+        ("KT", "Kotlin"),
+        ("JV", "Java"),
+        ("TST", "Testes"),
+        ("COV", "Cobertura"),
+        ("SUP", "Supressão"),
+        ("GRD", "Proteção da guarda"),
+        ("PRB", "Proibições do projeto"),
+    ];
+
+    /// `docs/regras.md`, gerado do catálogo e das explicações.
+    fn catalogo_markdown() -> String {
+        use crate::modelo::{REGRAS, Severidade};
+        let sev = |s: Severidade| match s {
+            Severidade::Erro => "erro",
+            Severidade::Aviso => "aviso",
+        };
+        let mut md = format!(
+            "# Catálogo de regras\n\n\
+             <!-- Gerado pelo teste `catalogo_em_docs_esta_em_dia` (src/explicar.rs). Não edite à mão:\n     \
+             GUARDA_ATUALIZAR_DOCS=1 cargo test catalogo -->\n\n\
+             {} regras. **Hoje** é a severidade padrão; **alvo** é a que a regra terá depois de \
+             calibrada em projetos reais (o perfil `rigoroso` já usa o alvo). Regras com \
+             **catraca** guardam o valor no baseline e só aceitam que ele caia.\n\n\
+             Para o porquê e um exemplo errado e certo: `guarda explicar <CODIGO>`. Para mudar a \
+             severidade ou desligar uma regra: `regras.severidade` e `regras.desligar` no `guarda.yml`.\n",
+            REGRAS.len()
+        );
+        for (prefixo, nome) in FAMILIAS {
+            let mut rs: Vec<_> = REGRAS
+                .iter()
+                .filter(|r| {
+                    r.codigo.starts_with(prefixo)
+                        && r.codigo[prefixo.len()..].starts_with(|c: char| c.is_ascii_digit())
+                })
+                .collect();
+            if rs.is_empty() {
+                continue;
+            }
+            rs.sort_by_key(|r| r.codigo);
+            md += &format!(
+                "\n## {nome}\n\n| Código | Regra (origem) | Hoje | Alvo | Catraca |\n| --- | --- | --- | --- | --- |\n"
+            );
+            for r in rs {
+                let titulo = EXPLICACOES
+                    .iter()
+                    .find(|e| e.codigo == r.codigo)
+                    .map_or(r.nome, |e| e.titulo)
+                    .replace('|', "\\|");
+                md += &format!(
+                    "| {} | {} | {} | {} | {} |\n",
+                    r.codigo,
+                    titulo,
+                    sev(r.severidade),
+                    sev(r.alvo),
+                    if r.catraca { "sim" } else { "" }
+                );
+            }
+        }
+        md
+    }
+
+    #[test]
+    fn catalogo_em_docs_esta_em_dia() {
+        let md = catalogo_markdown();
+        for r in crate::modelo::REGRAS {
+            assert!(
+                md.contains(&format!("| {} |", r.codigo)),
+                "{} fora das famílias",
+                r.codigo
+            );
+        }
+        let caminho = concat!(env!("CARGO_MANIFEST_DIR"), "/docs/regras.md");
+        if std::env::var_os("GUARDA_ATUALIZAR_DOCS").is_some() {
+            std::fs::write(caminho, &md).unwrap();
+        }
+        let atual = std::fs::read_to_string(caminho)
+            .unwrap_or_default()
+            .replace("\r\n", "\n");
+        assert!(
+            atual == md,
+            "docs/regras.md desatualizado: rode GUARDA_ATUALIZAR_DOCS=1 cargo test catalogo"
+        );
+    }
 }

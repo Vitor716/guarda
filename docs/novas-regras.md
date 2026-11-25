@@ -293,15 +293,17 @@ Depois de atualizar a guarda, o humano congela só as regras novas com
 [ ] testes: acusa e não acusa, Java e Kotlin quando valer para os dois
 [ ] trecho estável (sem linha, contagem ou texto variável)
 [ ] medido no corpus: tabela antes/depois, todos os achados revisados, ERR000 = 0
-[ ] docs/fase-N.md com a revisão; README (tabela de regras) e contagem de regras em
-    README.md, AGENTS.md, CLAUDE.md e docs/guia-ia.md
+[ ] docs/fase-N.md com a revisão; GUARDA_ATUALIZAR_DOCS=1 cargo test catalogo (docs/regras.md);
+    contagem de regras em README.md, AGENTS.md, CLAUDE.md e docs/guia-ia.md
+[ ] entrada em [Não lançado] no CHANGELOG.md
 [ ] cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 ```
 
 ## 9. Release
 
-1. Suba a versão em `Cargo.toml` (`cargo build` atualiza o `Cargo.lock`) e o status e a
-   linha do `gh release download` no README.
+1. Suba a versão em `Cargo.toml` (`cargo build` atualiza o `Cargo.lock`), mova o
+   **[Não lançado]** do `CHANGELOG.md` para a versão nova e atualize a versão do README
+   (selo e `gh release download`) e do `docs/adocao.md`.
 2. `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`.
 3. `cargo install --path . --locked` (os hooks dos projetos usam o binário do PATH).
 4. Commit, `git push`, e então `git tag vX.Y.Z && git push origin vX.Y.Z`: o

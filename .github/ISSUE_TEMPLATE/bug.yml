@@ -1,0 +1,25 @@
+name: Bug
+description: Erro da ferramenta (travou, saída errada, hook, baseline, cache, integração).
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: input
+    id: versao
+    attributes:
+      label: Versão e sistema
+      description: "`guarda --version` e o sistema operacional."
+    validations:
+      required: true
+  - type: textarea
+    id: passos
+    attributes:
+      label: Passos para reproduzir
+      description: Comando exato e, se der, o `guarda.yml` (sem segredos).
+    validations:
+      required: true
+  - type: textarea
+    id: esperado
+    attributes:
+      label: Esperado x obtido
+    validations:
+      required: true

@@ -1,0 +1,41 @@
+name: Nova regra
+description: Proponha uma regra nova ou a melhoria de uma existente.
+title: "[Regra] "
+labels: ["nova-regra"]
+body:
+  - type: markdown
+    attributes:
+      value: Os critérios de aceite estão em `docs/novas-regras.md` (seção 2).
+  - type: input
+    id: origem
+    attributes:
+      label: Origem
+      description: Regra equivalente em Sonar (S1234), PMD, detekt, Find Security Bugs, ArchUnit...
+    validations:
+      required: true
+  - type: textarea
+    id: problema
+    attributes:
+      label: O problema
+      description: O que a regra evita e por que importa.
+    validations:
+      required: true
+  - type: textarea
+    id: errado
+    attributes:
+      label: Exemplo errado
+      render: java
+    validations:
+      required: true
+  - type: textarea
+    id: certo
+    attributes:
+      label: Exemplo certo
+      render: java
+    validations:
+      required: true
+  - type: textarea
+    id: excecoes
+    attributes:
+      label: Casos que NÃO devem ser acusados
+      description: Padrões intencionais que a regra precisa respeitar.

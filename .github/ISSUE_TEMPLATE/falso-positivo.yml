@@ -1,0 +1,47 @@
+name: Falso positivo
+description: A guarda acusou algo que está certo (ou deixou passar algo errado).
+title: "[FP] CODIGO: "
+labels: ["falso-positivo"]
+body:
+  - type: input
+    id: regra
+    attributes:
+      label: Regra
+      description: Código da regra (por exemplo, SEC001, SML011).
+    validations:
+      required: true
+  - type: input
+    id: versao
+    attributes:
+      label: Versão
+      description: Saída de `guarda --version`.
+    validations:
+      required: true
+  - type: dropdown
+    id: linguagem
+    attributes:
+      label: Linguagem
+      options: [Java, Kotlin, configuração (yml/properties)]
+    validations:
+      required: true
+  - type: textarea
+    id: codigo
+    attributes:
+      label: Trecho mínimo
+      description: O menor código que reproduz. Troque nomes internos e NUNCA cole segredo real.
+      render: java
+    validations:
+      required: true
+  - type: textarea
+    id: saida
+    attributes:
+      label: Saída da guarda
+      description: A linha do `guarda check --formato compacto`.
+      render: text
+  - type: textarea
+    id: porque
+    attributes:
+      label: Por que está certo
+      description: O que torna esse caso intencional ou seguro (por exemplo, a exceção é logada antes).
+    validations:
+      required: true

@@ -35,7 +35,7 @@ jobs:
         run: |
           nome="guarda-${GITHUB_REF_NAME}-${{ matrix.alvo }}"
           mkdir -p "dist/$nome"
-          cp README.md "dist/$nome/"
+          cp README.md LICENSE CHANGELOG.md "dist/$nome/"
           if [[ "${{ matrix.alvo }}" == *windows* ]]; then
             cp "target/${{ matrix.alvo }}/release/guarda.exe" "dist/$nome/"
             (cd dist && 7z a "$nome.zip" "$nome" > /dev/null)

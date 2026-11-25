@@ -3,7 +3,13 @@ name = "guarda"
 version = "0.5.0"
 edition = "2024"
 rust-version = "1.88"
-description = "Linter determinÃ­stico para Kotlin e Java, com saÃ­da enxuta para IA"
+description = "Linter determinístico para Kotlin e Java, com saída enxuta para IA"
+authors = ["Vitor Vieira de Oliveira"]
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/Vitor716/guarda"
+keywords = ["linter", "kotlin", "java", "static-analysis", "tree-sitter"]
+categories = ["command-line-utilities", "development-tools"]
 publish = false
 
 [profile.release]
