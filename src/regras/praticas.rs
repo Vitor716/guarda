@@ -54,6 +54,13 @@ fn dono_do_bloco<'t>(b: Node<'t>, fonte: &str) -> Option<&'static str> {
     };
     if matches!(lugar, "método" | "função") {
         let f = if lugar == "método" { p } else { p.parent()? };
+        let anonima = f
+            .parent()
+            .and_then(|c| c.parent())
+            .is_some_and(|c| c.kind() == "object_creation_expression");
+        if anonima {
+            return None;
+        }
         // Anotado (@Override, @Pointcut, @PostConstruct...), default de interface ou abstrato:
         // vazio é intencional.
         let em_interface = {
@@ -105,6 +112,13 @@ pub fn verificar(ctx: &Contexto, v: &mut Vec<Violacao>) {
                 return;
             };
             if nome.is_empty() || excecoes::ignorada_de_proposito(nome) {
+                return;
+            }
+            let mut usa_no_bloco = false;
+            visitar(bloco, |y| {
+                usa_no_bloco |= y.kind() == "identifier" && texto(y, f) == nome;
+            });
+            if usa_no_bloco {
                 return;
             }
             percorrer(bloco, &mut |x| {
@@ -247,5 +261,21 @@ interface I { default void x() { } }"#;
             achar(k, Linguagem::Kotlin),
             [("KT008".to_string(), 2), ("SML010".into(), 6)]
         );
+    }
+
+    #[test]
+    fn calibrado_nos_repos_do_github() {
+        // Listener anônimo vazio (Android) e catch que loga a exceção antes de trocar por uma
+        // de negócio (crud-cliente, dom-api): intencionais.
+        let j = r#"class A {
+  void f() {
+    b.setOnClick(new DialogInterface.OnClickListener() {
+      public void onClick(DialogInterface d, int w) { }
+    });
+    try { salvar(); } catch (Exception e) { log.error("salvar", e); throw new ErroDeNegocio(ERRO); }
+    try { salvar(); } catch (Exception e) { throw new ErroDeNegocio(ERRO); }
+  }
+}"#;
+        assert_eq!(achar(j, Linguagem::Java), [("SML011".to_string(), 7)]);
     }
 }

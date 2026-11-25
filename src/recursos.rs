@@ -150,7 +150,14 @@ fn configuracao(rel: &str, texto: &str, v: &mut Vec<Violacao>) {
         yaml(texto)
     };
     let local = perfil_local(rel);
+    // Banco H2 em memória: a senha só vale dentro do próprio processo.
+    let h2_memoria = pares
+        .iter()
+        .any(|(k, v, _)| k.ends_with("datasource.url") && v.starts_with("jdbc:h2:mem"));
     for (chave, valor, linha) in pares {
+        if h2_memoria && chave.ends_with("datasource.password") {
+            continue;
+        }
         let ultimo = chave.rsplit('.').next().unwrap_or(&chave);
         // `${VAR:padrão}`: o valor padrão também fica no git.
         let fixo = match valor.strip_prefix("${") {
@@ -320,6 +327,21 @@ mod casos {
                 ("SEC017", 16),
             ],
             "{v:?}"
+        );
+    }
+
+    #[test]
+    fn senha_de_h2_em_memoria_nao_conta() {
+        let p = "spring.datasource.url=jdbc:h2:mem:testdb
+spring.datasource.password=password
+";
+        assert!(achar("src/main/resources/application.properties", p).is_empty());
+        let p = "spring.datasource.url=jdbc:h2:file:./dados
+spring.datasource.password=password
+";
+        assert_eq!(
+            achar("src/main/resources/application.properties", p).len(),
+            1
         );
     }
 

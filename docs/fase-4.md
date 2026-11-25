@@ -144,3 +144,41 @@ Testado de verdade (não só nos testes do repositório):
 | srvcondominioapi | 157 Java | 0,08 s | SEC001 2, SEC017 2, SPR006 4, BUG009 1, CND004 2 | 0 |
 | flow-study | 83 Kotlin | 0,09 s | 0 | 0 |
 | contas-termometro-project | 127 Kotlin + 12 Java | 0,12 s | SEC002 2, SML011 1 | 0 |
+
+### Revisão nos 29 repositórios do GitHub (2026-11-25)
+
+Os 29 repositórios Java/Kotlin do GitHub pessoal com código de aplicação (APIs Spring, JDBC,
+Kafka, hexagonal, Android), clonados raso fora do repositório; mais as 12 cópias locais.
+Cada achado do lote 5 foi conferido no código.
+
+| Regra | Antes | Depois | Revisão |
+| --- | --- | --- | --- |
+| SPR001 | 70 | 70 | reais: `@Autowired private` em campo (dom-api 31, crud-cliente 10) |
+| SPR006 | 16 | 16 | reais: `@Transactional` no controller (padrão do curso da Alura) |
+| JV006 | 13 | 13 | reais: `tipoPlano.equals("STARTUP")`, 10 numa linha só do `CnpjUtils` |
+| SPR004 | 6 | 6 | reais: `UserModel`, `User`, `Name`, `Post` (@Entity) no `@RequestBody` |
+| SPR003 | 3 | 3 | reais: `calcular()` @Transactional chamado pelo `this` |
+| SEC017 | 3 | 3 | reais: `include-stacktrace: on_param` e console do H2 no perfil principal |
+| SEC008 | 1 | 1 | real: `@CrossOrigin(origins = "*")` |
+| SEC001 | 14 | **10** | 1 falso positivo (`KEY_SENHA = "senha_key"`: nome de chave do Bundle do Android) e 3 senhas de H2 em memória; o resto é real (root/123 de MySQL e Postgres locais, minioadmin, senha na URL do Mongo, padrão do `jwt.secret`) |
+| SML011 | 33 | **1** | 32 eram `catch (Exception e) { log.error("...", e); throw new ErroDeNegocioException(CODIGO); }`: a pilha vai para o log e esconder o erro interno do cliente é intencional |
+| SML010 | 1 | **0** | `onClick` vazio de listener anônimo do Android |
+
+Ajustes (com teste):
+
+- **SEC001**: valor que é nome de chave (minúsculas, com palavra de segredo e de rótulo:
+  `senha_key`, `password_field`) não é segredo; `spring.datasource.password` não conta quando
+  `spring.datasource.url` é `jdbc:h2:mem:` (a senha só vale dentro do processo).
+- **SML010**: método de classe anônima (`new Listener() { ... }`) implementa interface; vazio é
+  intencional, como no `override` do Kotlin.
+- **SML011**: catch que usa a variável da exceção em qualquer lugar (log, wrap) não perdeu a
+  causa; só conta quando a exceção some de vez.
+
+Cópias locais, projetos não medidos antes: SPR003 real no mensageria-pedidos
+(`publicarPendentesAgendado()`, do `@Scheduled`, chama `publicarPendentes()` pelo `this`: a
+publicação agendada roda sem a transação), TST001 real no snowflake-id (teste de desempenho
+sem asserção) e SEC001 reais (senha do Postgres local no contas-termometro e termometro-dlq,
+padrão do `jwt.secret` no auth-demo). srv-usuario-api e srvcondominioapi: os mesmos números
+da medição anterior.
+
+Total nos 41 projetos: 0 erro de parse, 0 falso positivo conhecido nas regras do lote 5.

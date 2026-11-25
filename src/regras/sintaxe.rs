@@ -389,7 +389,17 @@ pub fn valor_de_segredo(v: &str) -> bool {
         .chars()
         .all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit())
         && v.contains('_');
-    !(rotulo || constante)
+    // Nome de chave de SharedPreferences, Bundle, formulário: `senha_key`, `password_field`.
+    const ROTULOS: &[&str] = &[
+        "key", "field", "campo", "param", "label", "name", "nome", "attr", "extra", "pref",
+    ];
+    let p = palavras(v);
+    let nome_de_chave = v
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        && p.iter().any(|w| SEGREDO.contains(&w.as_str()))
+        && p.iter().any(|w| ROTULOS.contains(&w.as_str()));
+    !(rotulo || constante || nome_de_chave)
 }
 
 /// A função mais próxima acima do nó (ou None no nível de classe).
@@ -511,6 +521,10 @@ mod casos {
     #[test]
     fn valores() {
         assert!(valor_de_segredo("minhaSenha123"));
+        assert!(valor_de_segredo("senha123"));
+        // Nome de chave de SharedPreferences/Bundle, não a senha (AppResturante, KEY_SENHA).
+        assert!(!valor_de_segredo("senha_key"));
+        assert!(!valor_de_segredo("password_field"));
         assert!(!valor_de_segredo("jwt.secret"));
         assert!(!valor_de_segredo("${JWT_SECRET}"));
         assert!(!valor_de_segredo("Senha inválida"));
